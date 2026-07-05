@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoe CLI AI — Ship features, not boilerplate</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0a;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 2rem;
+            text-align: center;
+        }
+        .terminal {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 700px;
+            width: 100%;
+            box-shadow: 0 0 30px rgba(99, 102, 241, 0.15);
+        }
+        .prompt {
+            color: #6366f1;
+            font-weight: bold;
+        }
+        .cursor {
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+        h1 {
+            font-size: 2.8rem;
+            font-weight: 700;
+            margin: 1rem 0 0.5rem;
+            background: linear-gradient(135deg, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .version {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 2rem;
+        }
+        .features {
+            text-align: left;
+            margin: 2rem 0;
+            padding: 0 1rem;
+        }
+        .features li {
+            list-style: "▹ ";
+            color: #a5b4fc;
+            margin: 0.8rem 0;
+        }
+        .cta {
+            display: inline-block;
+            background: #6366f1;
+            color: white;
+            padding: 0.8rem 2rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            margin: 0.5rem;
+            transition: background 0.2s;
+        }
+        .cta:hover {
+            background: #4f46e5;
+        }
+        .cta-outline {
+            background: transparent;
+            border: 1px solid #6366f1;
+            color: #a5b4fc;
+        }
+        .cta-outline:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="terminal">
+        <div style="font-family: 'Courier New', monospace; font-size: 1.1rem;">
+            <span class="prompt">$</span> npx @nocodeveloper/zoe-cli ship feature
+            <span class="cursor">█</span>
+        </div>
+        <h1>Zoe CLI AI</h1>
+        <p class="version">v0.1.2 – Public Preview</p>
+        <p style="font-size: 1.2rem; max-width: 500px; margin: 0 auto 1rem;">
+            AI-powered coding assistant. Get features shipped fast — skip the boilerplate.
+        </p>
+        <ul class="features">
+            <li>Entiende tu proyecto al instante</li>
+            <li>Genera componentes, lógica y APIs con IA</li>
+            <li>Integración con OpenRouter y más</li>
+            <li>Flujo de trabajo guiado por conversación</li>
+            <li>Totalmente open source (MIT)</li>
+        </ul>
+        <div style="margin-top: 2rem;">
+            <a href="#" class="cta"> Empezar ahora</a>
+            <a href="#" class="cta cta-outline"> Documentación</a>
+        </div>
+        <p style="margin-top: 2rem; font-size: 0.85rem; color: #666;">
+            Made with ❤️ by nocodeveloper
+        </p>
+    </div>
+</body>
+</html>
