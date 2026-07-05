@@ -78,7 +78,7 @@ zoe
 ## Run from source (for contributors)
 
 ```bash
-git clone https://github.com/zoe-cli/zoe-cli.git
+git clone https://github.com/iamnocodeveloper/zoe-cli.git
 cd zoe-cli
 npm install
 npm run dev
@@ -112,7 +112,7 @@ Some Windows antivirus tools block Zoe's local callback server on port `3456`. A
 
 ### Still stuck?
 
-Run `zoe doctor` (coming in v0.2) or open a [GitHub issue](https://github.com/zoe-cli/zoe-cli/issues) with:
+Run `zoe doctor` (coming in v0.2) or open a [GitHub issue](https://github.com/iamnocodeveloper/zoe-cli/issues) with:
 
 - `zoe --version`
 - `node --version`

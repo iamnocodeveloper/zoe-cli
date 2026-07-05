@@ -1,6 +1,6 @@
 # FAQ
 
-Frequently asked questions about Zoe CLI. Don't see your question? Open a [GitHub discussion](https://github.com/zoe-cli/zoe-cli/discussions).
+Frequently asked questions about Zoe CLI. Don't see your question? Open a [GitHub discussion](https://github.com/iamnocodeveloper/zoe-cli/discussions).
 
 ## General
 
@@ -89,10 +89,10 @@ Re-run `zoe login` — your previous session may have been overwritten or expire
 
 ### How can I help?
 
-- Report bugs and request features on [GitHub Issues](https://github.com/zoe-cli/zoe-cli/issues)
+- Report bugs and request features on [GitHub Issues](https://github.com/iamnocodeveloper/zoe-cli/issues)
 - Improve docs — even typo fixes are welcome
-- Share your projects and feedback on [X / Twitter](https://x.com/zoecli)
-- Star the [GitHub repo](https://github.com/zoe-cli/zoe-cli) — it helps others find Zoe
+- Share your projects and feedback on [X / Twitter](https://x.com/nocodeveloper)
+- Star the [GitHub repo](https://github.com/iamnocodeveloper/zoe-cli) — it helps others find Zoe
 
 ### How do I report a security issue?
 

@@ -7,9 +7,9 @@ It helps developers understand, plan and safely build software directly from the
 
 [![npm](https://img.shields.io/npm/v/@nocodeveloper/zoe-cli.svg)](https://www.npmjs.com/package/@nocodeveloper/zoe-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/zoe-cli/zoe-cli.svg)](https://github.com/zoe-cli/zoe-cli/stargazers)
-[![Issues](https://img.shields.io/github/issues/zoe-cli/zoe-cli.svg)](https://github.com/zoe-cli/zoe-cli/issues)
-[![Last Commit](https://img.shields.io/github/last-commit/zoe-cli/zoe-cli.svg)](https://github.com/zoe-cli/zoe-cli/commits/main)
+[![GitHub Stars](https://img.shields.io/github/stars/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/stargazers)
+[![Issues](https://img.shields.io/github/issues/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/commits/main)
 
 **Status:** Public Preview
 **Current npm `latest`:** 2.5.3
@@ -122,9 +122,9 @@ See the full breakdown in [ROADMAP.md](./ROADMAP.md).
 Zoe is being developed in public. Every commit, every decision, every failed experiment is part of the journey. If that resonates with you, follow along:
 
 - 🌐 [getzoe.cloud](https://getzoe.cloud)
-- 💻 [github.com/zoe-cli/zoe-cli](https://github.com/zoe-cli/zoe-cli)
-- 🐦 [@zoecli](https://x.com/zoecli) on X
-- 📺 [Zoe CLI on YouTube](https://youtube.com/@zoecli)
+- 💻 [github.com/iamnocodeveloper/zoe-cli](https://github.com/iamnocodeveloper/zoe-cli)
+- 🐦 [@nocodeveloper](https://x.com/nocodeveloper) on X
+- 📺 [NoCodeveloper](https://youtube.com/@NoCodeveloper)
 
 ---
 

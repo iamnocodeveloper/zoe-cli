@@ -1,6 +1,6 @@
 {
   "name": "@nocodeveloper/zoe-cli",
-  "version": "2.5.5",
+  "version": "2.5.6",
   "description": "Zoe CLI — Public Preview. AI-powered coding assistant. Ship features, not boilerplate.",
   "type": "module",
   "main": "dist/cli/index.js",
@@ -32,15 +32,15 @@
     "code-generation",
     "developer-tools"
   ],
-  "author": "Zoe Team",
+  "author": "Joel Araujo",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zoe-cli/zoe-cli.git"
+    "url": "https://github.com/iamnocodeveloper/zoe-cli.git"
   },
-  "homepage": "https://github.com/zoe-cli/zoe-cli#readme",
+  "homepage": "https://getzoe.cloud",
   "bugs": {
-    "url": "https://github.com/zoe-cli/zoe-cli/issues"
+    "url": "https://github.com/iamnocodeveloper/zoe-cli/issues"
   },
   "engines": {
     "node": ">=18.0.0"
