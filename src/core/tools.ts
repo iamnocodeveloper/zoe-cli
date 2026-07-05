@@ -185,10 +185,10 @@ export const tools: Tool[] = [
         // Count occurrences to detect ambiguity
         const occurrences = content.split(params.old_text).length - 1;
         if (occurrences === 0) {
-          return `Error: old_text not found in file. Use read_file first to see the exact content. Make sure indentation and whitespace match exactly.`;
+          return `Error: old_text was not found in ${params.path}. The file may have been modified, or the text does not match exactly (check whitespace, indentation, quotes). Do NOT claim the edit succeeded. Read the file again to see the current content and try with the exact text.`;
         }
         if (occurrences > 1) {
-          return `Error: old_text appears ${occurrences} times in the file. Provide more surrounding context so it matches exactly once.`;
+          return `Error: old_text appears ${occurrences} times in ${params.path}. Include more surrounding lines in old_text so it matches exactly once. Do NOT claim the edit succeeded.`;
         }
 
         const newContent = content.replace(params.old_text, params.new_text);

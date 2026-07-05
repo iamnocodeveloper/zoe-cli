@@ -103,13 +103,17 @@ async function callOpenRouter(
   return fullResponse;
 }
 
+// Cache of file contents read during the current task — avoids duplicate read_file calls
+const readFileCache = new Map<string, string>();
+
 async function processToolCalls(
   response: string,
   fileTracker?: { created: number; modified: number }
-): Promise<{ text: string; toolResults: { name: string; output: string }[] }> {
+): Promise<{ text: string; toolResults: { name: string; output: string }[]; writesSucceeded: number }> {
   const functionCallRegex = /<function_calls>([\s\S]*?)<\/function_calls>/g;
   let result = response;
   const toolResults: { name: string; output: string }[] = [];
+  let writesSucceeded = 0;
 
   for (const match of response.matchAll(functionCallRegex)) {
     const block = match[1];
@@ -125,7 +129,38 @@ async function processToolCalls(
         params[param[1]] = param[2].trim();
       }
 
-      if ((toolName === 'write_file' || toolName === 'edit_file') && params.path && fileTracker) {
+      // Anti-duplicate read: if the file was already read, return cached content
+      if (toolName === 'read_file' && params.path) {
+        const fullPath = path.resolve(process.cwd(), params.path);
+        const cacheKey = fullPath;
+        if (readFileCache.has(cacheKey)) {
+          toolResults.push({ name: toolName, output: readFileCache.get(cacheKey)! });
+          continue;
+        }
+      }
+
+      console.log(`  🔧  ${chalk.cyan('Executing:')} ${chalk.yellow(toolName)}`);
+      const toolResult = await executeTool(toolName, params);
+
+      // Cache successful read_file results
+      if (toolName === 'read_file' && params.path && !toolResult.startsWith('File not found') && !toolResult.startsWith('Error')) {
+        const fullPath = path.resolve(process.cwd(), params.path);
+        readFileCache.set(fullPath, toolResult);
+      }
+
+      // Invalidate cache on write/edit for this path
+      if ((toolName === 'write_file' || toolName === 'edit_file') && params.path) {
+        const fullPath = path.resolve(process.cwd(), params.path);
+        readFileCache.delete(fullPath);
+      }
+
+      // Only count as a successful write if the tool returned success
+      const writeSucceeded =
+        (toolName === 'write_file' && toolResult.startsWith('File written:')) ||
+        (toolName === 'edit_file' && toolResult.startsWith('File edited:'));
+
+      if (writeSucceeded && fileTracker) {
+        writesSucceeded++;
         const fullPath = path.resolve(process.cwd(), params.path);
         if (fs.existsSync(fullPath)) {
           fileTracker.modified++;
@@ -134,8 +169,6 @@ async function processToolCalls(
         }
       }
 
-      console.log(`  🔧  ${chalk.cyan('Executing:')} ${chalk.yellow(toolName)}`);
-      const toolResult = await executeTool(toolName, params);
       toolResults.push({ name: toolName, output: toolResult });
       console.log(`  ${chalk.green('✓')}  ${chalk.gray(toolResult.replace(/\n/g, ' · ').slice(0, 80))}`);
     }
@@ -143,7 +176,7 @@ async function processToolCalls(
     result = result.replace(match[0], '');
   }
 
-  return { text: result.trim(), toolResults };
+  return { text: result.trim(), toolResults, writesSucceeded };
 }
 
 // ---- AGENT: Quick Chat ----
@@ -152,6 +185,7 @@ export async function runAgent(
   prompt: string,
   options?: { onFirstToken?: () => void }
 ) {
+  readFileCache.clear();
   const model = getModel();
 
   loadSession();
@@ -187,23 +221,24 @@ ${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
 
   const fullResponse = await callOpenRouter(messages, options);
 
-  const { text, toolResults } = await processToolCalls(fullResponse);
+  const localFileTracker = { created: 0, modified: 0 };
+  const { text, toolResults, writesSucceeded } = await processToolCalls(fullResponse, localFileTracker);
   let finalResponse = text || fullResponse;
+  let totalWrites = writesSucceeded;
 
   // ALWAYS run feedback loop after tool calls so the AI produces a summary
   // and the user sees a clear "Done" message before the next prompt.
   if (toolResults.length > 0) {
     messages.push(
       { role: 'assistant' as const, content: finalResponse },
-      { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a brief summary of what was done. If more work is needed (e.g., another file to create, or the user expected multiple changes), proceed with the next tool call.` }
+      { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a brief summary of what was done. If more work is needed (e.g., another file to create, or the user expected multiple changes), proceed with the next tool call. IMPORTANT: If no write_file or edit_file succeeded, state clearly that no files were modified yet.` }
     );
     displayThinking();
     try {
       const followup = await callOpenRouter(messages, { onFirstToken: clearThinking });
-      // Process any new tool calls in the followup response
-      const followupProcessed = await processToolCalls(followup);
+      const followupProcessed = await processToolCalls(followup, localFileTracker);
+      totalWrites += followupProcessed.writesSucceeded;
       if (followupProcessed.toolResults.length > 0) {
-        // Recursive feedback for multi-step tasks
         messages.push(
           { role: 'assistant' as const, content: followupProcessed.text || followup },
           { role: 'user' as const, content: `Tool results:\n${followupProcessed.toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a final summary of everything that was done.` }
@@ -220,6 +255,14 @@ ${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
     } catch (e) {
       // Feedback loop failed — surface the tool results so user sees what happened
       finalResponse = `Done. Tool results:\n${toolResults.map(r => `- ${r.name}: ${r.output.slice(0, 300)}`).join('\n')}`;
+    }
+  }
+
+  // HONESTY GUARD: If the AI claimed to have done work but no writes succeeded, append a correction
+  if (totalWrites === 0 && toolResults.length > 0) {
+    const claimedActions = /\b(created|wrote|updated|modified|changed|fixed|edited|added|removed|deleted|moved|renamed)\b/i.test(finalResponse);
+    if (claimedActions) {
+      finalResponse += '\n\n' + chalk.yellow('Note: No files were actually modified. The operations above did not produce any file changes.');
     }
   }
 
@@ -288,6 +331,7 @@ export async function executePlan(
   nextStep?: string;
   elapsedMs: number;
 }> {
+  readFileCache.clear();
   const startTime = Date.now();
   const model = getModel();
 
@@ -320,26 +364,34 @@ ${tools.map(t => `- ${t.name}: ${t.description} — params: ${Object.keys(t.para
   ];
 
   const executionResult = await callOpenRouter(executionMessages);
-  const { text: processedResult, toolResults } = await processToolCalls(executionResult, fileTracker);
+  const { text: processedResult, toolResults, writesSucceeded: firstWrites } = await processToolCalls(executionResult, fileTracker);
   let finalExecText = processedResult || executionResult;
+  let totalWrites = firstWrites;
 
   // Feedback loop — keep prompting until the AI stops calling tools or hits limit
   let loopCount = 0;
-  while (toolResults.length > 0 && loopCount < 5) {
+  let workingToolResults = [...toolResults];
+  while (workingToolResults.length > 0 && loopCount < 5) {
     loopCount++;
     executionMessages.push(
       { role: 'assistant' as const, content: finalExecText },
-      { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nContinue. If you need to do more work (read another file, edit more, etc.), use the appropriate tool calls. When you're completely done, respond with a one-sentence summary and NO tool calls.` }
+      { role: 'user' as const, content: `Tool results:\n${workingToolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nContinue. If you need to do more work (read another file, edit more, etc.), use the appropriate tool calls. When you're completely done, respond with a one-sentence summary and NO tool calls. IMPORTANT: If no write_file or edit_file succeeded so far, state that no files have been modified yet.` }
     );
     displayPhase(`Continuing (step ${loopCount + 1})...`);
     const continueResult = await callOpenRouter(executionMessages);
     const processed = await processToolCalls(continueResult, fileTracker);
+    totalWrites += processed.writesSucceeded;
     if (processed.toolResults.length === 0) {
       finalExecText = processed.text || continueResult;
       break;
     }
     finalExecText = processed.text || continueResult;
-    toolResults.splice(0, toolResults.length, ...processed.toolResults);
+    workingToolResults = [...processed.toolResults];
+  }
+
+  // HONESTY GUARD: If the AI claimed completion but no writes succeeded, append a correction
+  if (totalWrites === 0) {
+    finalExecText += '\n\nNo files were modified. The task did not produce any file changes.';
   }
 
   addMessage('assistant', finalExecText);

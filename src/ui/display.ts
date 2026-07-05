@@ -149,19 +149,26 @@ export function displaySummary(result: {
     ? chalk.gray(`  (${formatElapsed(result.elapsedMs)})`)
     : '';
 
+  const totalChanges = result.filesCreated + result.filesModified;
+  const headerIcon = totalChanges > 0 ? chalk.green('✅') : chalk.yellow('⚠');
+  const headerLabel = totalChanges > 0 ? chalk.bold('Completed') : chalk.bold('No files changed');
+
   console.log('');
   console.log(`  ${chalk.green('─'.repeat(60))}`);
-  console.log(`  ${chalk.green('✅')}  ${chalk.bold('Completed')}${elapsedStr}`);
+  console.log(`  ${headerIcon}  ${headerLabel}${elapsedStr}`);
   console.log(`  ${chalk.green('─'.repeat(60))}`);
   console.log(`  ${chalk.white('📄  Files created:')}  ${chalk.cyan(result.filesCreated.toString())}`);
   console.log(`  ${chalk.white('📝  Files modified:')} ${chalk.cyan(result.filesModified.toString())}`);
+  if (totalChanges === 0) {
+    console.log(`  ${chalk.gray('    The task did not produce any file changes.')}`);
+  }
   if (result.warnings.length > 0) {
     console.log(`  ${chalk.yellow('⚠️   Warnings:')}     ${chalk.yellow(result.warnings.join(', '))}`);
   } else {
     console.log(`  ${chalk.white('⚠️   Warnings:')}     ${chalk.green('None')}`);
   }
   console.log(`  ${chalk.green('─'.repeat(60))}`);
-  if (result.nextStep) {
+  if (result.nextStep && totalChanges > 0) {
     console.log('');
     console.log(`  ${chalk.gray('Next:')} ${chalk.cyan(result.nextStep)}`);
   }
