@@ -229,33 +229,51 @@ ${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
   // ALWAYS run feedback loop after tool calls so the AI produces a summary
   // and the user sees a clear "Done" message before the next prompt.
   if (toolResults.length > 0) {
-    messages.push(
-      { role: 'assistant' as const, content: finalResponse },
-      { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a brief summary of what was done. If more work is needed (e.g., another file to create, or the user expected multiple changes), proceed with the next tool call. IMPORTANT: If no write_file or edit_file succeeded, state clearly that no files were modified yet.` }
+    // Stagnation guard: if the first batch of tool results had no writes, skip
+    // the feedback loop entirely — there's nothing to follow up on.
+    const firstBatchHadWrites = toolResults.some(r =>
+      r.name === 'write_file' || r.name === 'edit_file'
     );
-    displayThinking();
-    try {
-      const followup = await callOpenRouter(messages, { onFirstToken: clearThinking });
-      const followupProcessed = await processToolCalls(followup, localFileTracker);
-      totalWrites += followupProcessed.writesSucceeded;
-      if (followupProcessed.toolResults.length > 0) {
-        messages.push(
-          { role: 'assistant' as const, content: followupProcessed.text || followup },
-          { role: 'user' as const, content: `Tool results:\n${followupProcessed.toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a final summary of everything that was done.` }
+
+    if (firstBatchHadWrites) {
+      messages.push(
+        { role: 'assistant' as const, content: finalResponse },
+        { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a brief summary of what was done. If more work is needed (e.g., another file to create, or the user expected multiple changes), proceed with the next tool call. IMPORTANT: If no write_file or edit_file succeeded, state clearly that no files were modified yet.` }
+      );
+      displayThinking();
+      try {
+        const followup = await callOpenRouter(messages, { onFirstToken: clearThinking });
+        const followupProcessed = await processToolCalls(followup, localFileTracker);
+        totalWrites += followupProcessed.writesSucceeded;
+
+        // Stagnation guard in recursive feedback: if the followup had no
+        // additional writes, accept the text and stop.
+        const followupHadWrites = followupProcessed.toolResults.some(r =>
+          r.name === 'write_file' || r.name === 'edit_file'
         );
-        displayThinking();
-        try {
-          finalResponse = await callOpenRouter(messages, { onFirstToken: clearThinking });
-        } catch (e) {
+
+        if (followupProcessed.toolResults.length > 0 && followupHadWrites) {
+          messages.push(
+            { role: 'assistant' as const, content: followupProcessed.text || followup },
+            { role: 'user' as const, content: `Tool results:\n${followupProcessed.toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a final summary of everything that was done.` }
+          );
+          displayThinking();
+          try {
+            finalResponse = await callOpenRouter(messages, { onFirstToken: clearThinking });
+          } catch (e) {
+            finalResponse = followupProcessed.text || followup;
+          }
+        } else {
           finalResponse = followupProcessed.text || followup;
         }
-      } else {
-        finalResponse = followupProcessed.text || followup;
+      } catch (e) {
+        // Feedback loop failed — surface the tool results so user sees what happened
+        finalResponse = `Done. Tool results:\n${toolResults.map(r => `- ${r.name}: ${r.output.slice(0, 300)}`).join('\n')}`;
       }
-    } catch (e) {
-      // Feedback loop failed — surface the tool results so user sees what happened
-      finalResponse = `Done. Tool results:\n${toolResults.map(r => `- ${r.name}: ${r.output.slice(0, 300)}`).join('\n')}`;
     }
+    // If first batch had no writes, finalResponse is already the raw text from
+    // the AI explaining what it tried. The honesty guard below will catch it
+    // if it claimed actions.
   }
 
   // HONESTY GUARD: If the AI claimed to have done work but no writes succeeded, append a correction
@@ -371,8 +389,26 @@ ${tools.map(t => `- ${t.name}: ${t.description} — params: ${Object.keys(t.para
   // Feedback loop — keep prompting until the AI stops calling tools or hits limit
   let loopCount = 0;
   let workingToolResults = [...toolResults];
+  let consecutiveNoWrites = 0;
+  const MAX_NO_WRITE_ITERATIONS = 2;
   while (workingToolResults.length > 0 && loopCount < 5) {
     loopCount++;
+
+    // Stagnation guard: if the last batch had no writes, count it. After 2
+    // consecutive no-write iterations, break the loop — the AI isn't making
+    // progress and continuing wastes tokens + confuses the user.
+    const hadWrites = workingToolResults.some(r =>
+      r.name === 'write_file' || r.name === 'edit_file'
+    );
+    if (hadWrites) {
+      consecutiveNoWrites = 0;
+    } else {
+      consecutiveNoWrites++;
+    }
+    if (consecutiveNoWrites >= MAX_NO_WRITE_ITERATIONS) {
+      break;
+    }
+
     executionMessages.push(
       { role: 'assistant' as const, content: finalExecText },
       { role: 'user' as const, content: `Tool results:\n${workingToolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nContinue. If you need to do more work (read another file, edit more, etc.), use the appropriate tool calls. When you're completely done, respond with a one-sentence summary and NO tool calls. IMPORTANT: If no write_file or edit_file succeeded so far, state that no files have been modified yet.` }

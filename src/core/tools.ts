@@ -232,24 +232,24 @@ export const tools: Tool[] = [
     }
   },
   {
-    name: 'search_files',
-    description: 'Search for files matching a pattern',
+    name: 'glob_files',
+    description: 'Find files BY NAME matching a glob pattern (e.g. "*.ts", "src/**/*.json"). For text inside files, use grep_files.',
     parameters: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'Search pattern (glob)' },
-        path: { type: 'string', description: 'Directory to search in' }
+        pattern: { type: 'string', description: 'Glob pattern (e.g. "*.ts", "**/*.html")' },
+        path: { type: 'string', description: 'Directory to search in (default: current directory)' }
       },
       required: ['pattern']
     },
     execute: async (params: { pattern: string; path?: string }) => {
-      displayToolUsage('search_files', params);
+      displayToolUsage('glob_files', params);
       const searchPath = params.path || process.cwd();
       const { glob } = await import('glob');
       try {
         const files = await glob(params.pattern, {
           cwd: searchPath,
-          ignore: ['node_modules/**', '.git/**']
+          ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
         });
         if (files.length === 0) {
           return `No files found matching: ${params.pattern}`;
@@ -258,6 +258,80 @@ export const tools: Tool[] = [
       } catch (error) {
         return `Search failed: ${error}`;
       }
+    }
+  },
+  {
+    name: 'grep_files',
+    description: 'Search for TEXT content inside files. Returns matching lines as "file:line:content".',
+    parameters: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Text to search for (literal string, not regex)' },
+        path: { type: 'string', description: 'Directory to search in (default: current directory)' },
+        file_pattern: { type: 'string', description: 'Glob to limit files (e.g. "*.html")' },
+        case_sensitive: { type: 'boolean', description: 'Case sensitive search (default: true)' }
+      },
+      required: ['pattern']
+    },
+    execute: async (params: { pattern: string; path?: string; file_pattern?: string; case_sensitive?: boolean }) => {
+      displayToolUsage('grep_files', params);
+      const fsSync = await import('fs');
+      const pathMod = await import('path');
+      const searchPath = params.path || process.cwd();
+      const caseSensitive = params.case_sensitive !== false;
+      const needle = caseSensitive ? params.pattern : params.pattern.toLowerCase();
+      const filePattern = params.file_pattern;
+
+      // Build the list of files to search
+      let filesToSearch: string[];
+      if (filePattern) {
+        const { glob } = await import('glob');
+        filesToSearch = await glob(filePattern, {
+          cwd: searchPath,
+          ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**', '.next/**'],
+        });
+      } else {
+        const walk = (dir: string, acc: string[] = []): string[] => {
+          const items = fsSync.readdirSync(dir);
+          for (const item of items) {
+            if (['node_modules', '.git', 'dist', 'build', '.next'].includes(item)) continue;
+            const fullPath = pathMod.join(dir, item);
+            const stat = fsSync.statSync(fullPath);
+            if (stat.isDirectory()) {
+              walk(fullPath, acc);
+            } else if (stat.isFile() && stat.size < 5_000_000) {
+              acc.push(fullPath);
+            }
+          }
+          return acc;
+        };
+        filesToSearch = walk(searchPath);
+      }
+
+      const matches: string[] = [];
+      for (const file of filesToSearch) {
+        try {
+          const content = fsSync.readFileSync(file, 'utf-8');
+          const haystack = caseSensitive ? content : content.toLowerCase();
+          const lines = content.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            const lineText = caseSensitive ? lines[i] : lines[i].toLowerCase();
+            if (lineText.includes(needle)) {
+              matches.push(`${pathMod.relative(searchPath, file)}:${i + 1}:${lines[i].trim()}`);
+              if (matches.length >= 100) break;
+            }
+          }
+        } catch {
+          // skip binary or unreadable files
+        }
+        if (matches.length >= 100) break;
+      }
+
+      if (matches.length === 0) {
+        return `No matches found for "${params.pattern}" in ${filesToSearch.length} file(s).`;
+      }
+      const suffix = matches.length >= 100 ? '\n... (truncated at 100 matches)' : '';
+      return `Found ${matches.length} match(es) for "${params.pattern}":\n${matches.join('\n')}${suffix}`;
     }
   },
   {
