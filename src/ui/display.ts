@@ -4,21 +4,57 @@ import { getProjectStats } from '../core/intelligence.js';
 
 export function displayWelcome(user: string, model: string, projectName: string) {
   const stats = getProjectStats();
+  const projectIsEmpty = stats.files === 0;
 
   console.clear();
   console.log(chalk.cyan(ZOE_LOGO));
   console.log('');
   console.log(chalk.gray(ZOE_DIVIDER));
   console.log('');
-  console.log(`  ${chalk.white('👤  User:')}      ${chalk.green(user)}`);
-  console.log(`  ${chalk.white('🤖  Model:')}     ${chalk.yellow(model)}`);
-  console.log(`  ${chalk.white('📁  Project:')}   ${chalk.blue(projectName)}`);
-  console.log(`  ${chalk.white('📊  Files:')}     ${chalk.magenta(stats.files.toString())}  │  ${chalk.white('Lines:')}  ${chalk.magenta(stats.lines.toString())}`);
-  console.log(`  ${chalk.white('🧠  Analysis:')}  ${chalk.green('Project Intelligence ready ✓')}`);
+  console.log(`  ${chalk.bold('Welcome to Zoe')}`);
+  console.log(`  ${chalk.gray('Understand your project before AI does.')}`);
+  console.log('');
+  console.log(`  ${chalk.white('Project:')} ${chalk.blue(projectName)}${projectIsEmpty ? chalk.gray(' (empty)') : ''}`);
+
+  if (!projectIsEmpty) {
+    console.log(`  ${chalk.white('Files:')}   ${chalk.magenta(stats.files.toString())} ${chalk.gray('│')} ${chalk.white('Lines:')} ${chalk.magenta(stats.lines.toString())}`);
+  }
+
   console.log('');
   console.log(chalk.gray(ZOE_DIVIDER));
   console.log('');
-  console.log(`  ${chalk.gray('💬  Ask me anything about your project...')}`);
+
+  if (projectIsEmpty) {
+    displayEmptyProjectGuidance();
+  } else {
+    displayFirstRunSuggestions();
+  }
+
+  console.log('');
+}
+
+function displayFirstRunSuggestions(): void {
+  console.log(`  ${chalk.bold('Try one of these:')}`);
+  console.log('');
+  console.log(`    ${chalk.cyan('•')} Analyze this project`);
+  console.log(`    ${chalk.cyan('•')} Explain this codebase`);
+  console.log(`    ${chalk.cyan('•')} Create a landing page`);
+  console.log(`    ${chalk.cyan('•')} Find bugs in my project`);
+  console.log('');
+  console.log(`  ${chalk.gray('Type naturally. No slash commands required.')}`);
+  console.log('');
+}
+
+function displayEmptyProjectGuidance(): void {
+  console.log(`  ${chalk.yellow('⚠')}  ${chalk.bold('This directory is empty.')}`);
+  console.log('');
+  console.log(`  Zoe is ready to help. You can:`);
+  console.log('');
+  console.log(`    ${chalk.cyan('1.')} ${chalk.bold('Create a new project here')}`);
+  console.log(`       ${chalk.gray('Example:')} "Create a Node.js CLI with TypeScript"`);
+  console.log('');
+  console.log(`    ${chalk.cyan('2.')} ${chalk.bold('Open an existing project')}`);
+  console.log(`       ${chalk.gray('Run:')} cd /path/to/your/project && zoe`);
   console.log('');
 }
 
@@ -107,9 +143,15 @@ export function displaySummary(result: {
   filesModified: number;
   warnings: string[];
   nextStep?: string;
+  elapsedMs?: number;
 }) {
-  console.log(`\n  ${chalk.green('─'.repeat(60))}`);
-  console.log(`  ${chalk.green('✅')}  ${chalk.bold('Completed')}`);
+  const elapsedStr = result.elapsedMs !== undefined
+    ? chalk.gray(`  (${formatElapsed(result.elapsedMs)})`)
+    : '';
+
+  console.log('');
+  console.log(`  ${chalk.green('─'.repeat(60))}`);
+  console.log(`  ${chalk.green('✅')}  ${chalk.bold('Completed')}${elapsedStr}`);
   console.log(`  ${chalk.green('─'.repeat(60))}`);
   console.log(`  ${chalk.white('📄  Files created:')}  ${chalk.cyan(result.filesCreated.toString())}`);
   console.log(`  ${chalk.white('📝  Files modified:')} ${chalk.cyan(result.filesModified.toString())}`);
@@ -120,9 +162,19 @@ export function displaySummary(result: {
   }
   console.log(`  ${chalk.green('─'.repeat(60))}`);
   if (result.nextStep) {
-    console.log(`\n  ${chalk.gray('▶️  Next:')} ${chalk.cyan(result.nextStep)}`);
+    console.log('');
+    console.log(`  ${chalk.gray('Next:')} ${chalk.cyan(result.nextStep)}`);
   }
   console.log('');
+}
+
+export function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}m ${s}s`;
 }
 
 export function displayFooter() {

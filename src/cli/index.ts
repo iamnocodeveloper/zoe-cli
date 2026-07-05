@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { chat } from './commands/chat.js';
 import { loginCommand, logoutCommand, whoamiCommand } from './commands/login.js';
 import { modelsCommand, useCommand } from './commands/models.js';
@@ -26,6 +27,12 @@ const program = new Command()
   .version(version)
   .option('-v, --verbose', 'Enable verbose output');
 
+program.on('option:version', async () => {
+  const { displayVersion } = await import('./commands/version.js');
+  await displayVersion();
+  process.exit(0);
+});
+
 // Main command: "zoe" → starts interactive chat
 // "zoe <prompt>" → runs the prompt directly
 program
@@ -47,22 +54,54 @@ program.addCommand(scanCommand);
 program.addCommand(doctorCommand);
 program.addCommand(summaryCommand);
 
-// Add help examples
-program.addHelpText('after', `
-${DIM}Examples:${RESET}
-  ${muted('$')} zoe                              ${info('Start interactive chat')}
-  ${muted('$')} zoe "Add authentication"         ${info('Run a task directly')}
-  ${muted('$')} zoe login                        ${info('Login with GitHub')}
-  ${muted('$')} zoe logout                       ${info('Logout')}
-  ${muted('$')} zoe whoami                       ${info('Show current user')}
-  ${muted('$')} zoe models                       ${info('List available models')}
-  ${muted('$')} zoe use deepseek/deepseek-v4-flash ${info('Select a model')}
-  ${muted('$')} zoe scan                         ${info('Scan project structure')}
-  ${muted('$')} zoe doctor                       ${info('Check project health')}
-  ${muted('$')} zoe summary                      ${info('Show project summary')}
+// Rich version subcommand
+const versionCommand = new Command('version')
+  .description('Show Zoe version, model, and cloud status')
+  .action(async () => {
+    const { displayVersion } = await import('./commands/version.js');
+    await displayVersion();
+  });
+program.addCommand(versionCommand);
 
-${DIM}For more information on a command, run:${RESET}
-  ${muted('$')} zoe <command> --help
+// Add help text organized by sections
+program.addHelpText('after', `
+${chalk.bold('INSTALL')}
+  ${muted('$')} npm install -g @nocodeveloper/zoe-cli
+
+${chalk.bold('LOGIN')}
+  ${chalk.cyan('zoe login')}           Open browser, sign in with GitHub
+  ${chalk.cyan('zoe logout')}          Sign out and clear local session
+  ${chalk.cyan('zoe whoami')}          Show current account
+
+${chalk.bold('COMMANDS')}
+  ${chalk.cyan('zoe')}                 Start interactive chat
+  ${chalk.cyan('zoe "<task>"')}        Run a task directly
+  ${chalk.cyan('zoe models')}          List available AI models
+  ${chalk.cyan('zoe use <model>')}     Switch the active model
+  ${chalk.cyan('zoe scan')}            Re-scan the current project
+  ${chalk.cyan('zoe doctor')}          Verify environment, cloud, login
+  ${chalk.cyan('zoe summary')}         Show project overview
+  ${chalk.cyan('zoe --version')}       Version, model, cloud status
+  ${chalk.cyan('zoe --help')}          Show this help
+
+${chalk.bold('EXAMPLES')}
+  ${muted('$')} zoe
+  ${DIM}Start chatting. Try "Analyze this project".${RESET}
+
+  ${muted('$')} zoe "Add a login form to index.html"
+  ${DIM}Single-shot task: plan, build, review.${RESET}
+
+  ${muted('$')} zoe "Create a Node.js CLI"
+  ${DIM}Bootstrap a brand new project from scratch.${RESET}
+
+${chalk.bold('IN-CHAT COMMANDS')}
+  ${chalk.cyan('/model <name>')}       Switch model
+  ${chalk.cyan('/scan')}              Re-scan project
+  ${chalk.cyan('/help')}              In-chat help
+  ${chalk.cyan('exit | quit')}         Leave Zoe
+
+${chalk.gray('Docs:')}    ${info('https://github.com/iamnocodeveloper/zoe-cli')}
+${chalk.gray('Issues:')}  ${info('https://github.com/iamnocodeveloper/zoe-cli/issues')}
 `);
 
 // Parse arguments

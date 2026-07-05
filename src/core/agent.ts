@@ -286,7 +286,9 @@ export async function executePlan(
   filesModified: number;
   warnings: string[];
   nextStep?: string;
+  elapsedMs: number;
 }> {
+  const startTime = Date.now();
   const model = getModel();
 
   const projectContext = getProjectDescription();
@@ -295,7 +297,7 @@ export async function executePlan(
   const fileTracker = { created: 0, modified: 0 };
 
   // Phase 3 — Execute
-  displayPhase('Creating components...');
+  displayPhase('Building...');
 
   const executionMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
     {
@@ -343,7 +345,7 @@ ${tools.map(t => `- ${t.name}: ${t.description} — params: ${Object.keys(t.para
   addMessage('assistant', finalExecText);
 
   // Phase 4 — Review
-  displayPhase('Running review...');
+  displayPhase('Reviewing...');
 
   const reviewMessages = [
     {
@@ -397,5 +399,6 @@ Review the work done.`
     filesModified: fileTracker.modified,
     warnings,
     nextStep,
+    elapsedMs: Date.now() - startTime,
   };
 }

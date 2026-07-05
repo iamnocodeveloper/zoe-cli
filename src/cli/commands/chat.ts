@@ -1,5 +1,5 @@
 import { getSession, getModel, saveModel } from '../../core/config.js';
-import { displayWelcome, clearThinking, displayFriendlyError, displayPlan, displaySummary } from '../../ui/display.js';
+import { displayWelcome, clearThinking, displayFriendlyError, displayPlan, displaySummary, displayPhase } from '../../ui/display.js';
 import { runAgent, createPlan, executePlan } from '../../core/agent.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -121,12 +121,16 @@ export async function chat(prompt?: string) {
       });
     } catch (e) {
       // stdin closed (pipe ended, EOF, Ctrl+D) — exit cleanly
-      console.log('\n  👋  Goodbye! Zoe will remember your project.\n');
+      console.log('');
+      console.log('  👋  Goodbye!');
+      console.log('');
       break;
     }
 
     if (userInput.toLowerCase() === 'exit' || userInput.toLowerCase() === 'quit') {
-      console.log('\n  👋  Goodbye! Zoe will remember your project.\n');
+      console.log('');
+      console.log('  👋  Goodbye!');
+      console.log('');
       break;
     }
 
@@ -134,12 +138,14 @@ export async function chat(prompt?: string) {
       const modelName = userInput.replace('/model', '').trim();
       if (modelName) {
         saveModel(modelName);
-        console.log(chalk.green(`  ✅  Model changed to: ${modelName}\n`));
-        console.log(`  🤖  Now using: ${chalk.yellow(getModel())}`);
+        console.log('');
+        console.log(`  ${chalk.green('✓')} Model changed to: ${chalk.yellow(modelName)}`);
         console.log('');
       } else {
-        console.log(chalk.gray('  📋  Usage: /model <model-name>'));
-        console.log('  📋  Example: /model deepseek/deepseek-v4-flash\n');
+        console.log('');
+        console.log(`  ${chalk.gray('Usage:')}   /model <model-name>`);
+        console.log(`  ${chalk.gray('Example:')} /model deepseek/deepseek-v4-flash`);
+        console.log('');
       }
       continue;
     }
@@ -239,12 +245,14 @@ async function executeTerminalCommand(command: string) {
 // ---- Task Pipeline ----
 
 async function runTaskWithPipeline(request: string) {
-  console.log(chalk.gray('  ────────────────────────────────────────────────────────────'));
+  console.log('');
 
   try {
     // Phase 1 & 2 — Plan
+    displayPhase('Reading workspace...');
     const { plan, isDestructive } = await createPlan(request);
     clearThinking();
+    displayPhase('Planning...');
 
     displayPlan(plan);
 
