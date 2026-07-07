@@ -1,71 +1,28 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-import chalk from 'chalk';
 import { createClient } from '@insforge/sdk';
+import { getZoeCloudConfig, getZoeCloudUnreachableError, ZOE_STATUS_PAGE } from './cloud.js';
+import { getSession } from './config.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { join, dirname } from 'path';
+import { homedir } from 'os';
+import chalk from 'chalk';
 
 export interface InsForgeConfig {
   baseUrl: string;
   projectId: string;
 }
 
-function readConfigFile(configPath: string): InsForgeConfig | null {
-  try {
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    return {
-      baseUrl: raw.oss_host || raw.baseUrl || raw.apiUrl || 'https://api.insforge.dev',
-      projectId: raw.project_id || raw.projectId || raw.PROJECT_ID || '',
-    };
-  } catch {
-    return null;
-  }
-}
-
-const CONFIG_HOME = () => path.join(os.homedir(), '.insforge', 'project.json');
-const AUTH_HOME = () => path.join(os.homedir(), '.insforge', 'auth.json');
-
-function findInsForgeConfig(): InsForgeConfig | null {
-  const homeConfig = CONFIG_HOME();
-  if (fs.existsSync(homeConfig)) {
-    const config = readConfigFile(homeConfig);
-    if (config) return config;
-  }
-
-  let currentDir = process.cwd();
-  for (let i = 0; i < 10; i++) {
-    const configPath = path.join(currentDir, '.insforge', 'project.json');
-    if (fs.existsSync(configPath)) {
-      const config = readConfigFile(configPath);
-      if (config) return config;
-    }
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) break;
-    currentDir = parentDir;
-  }
-  return null;
-}
-
-async function ensureProjectConfig(): Promise<InsForgeConfig> {
-  const existing = findInsForgeConfig();
-  if (existing) return existing;
-  throw new Error('Not authenticated. Run: zoe login');
-}
+const AUTH_HOME = () => join(homedir(), '.zoe', 'auth.json');
 
 let insforgeClient: any = null;
 
-export async function getInsForgeClient(): Promise<any> {
+export function getInsForgeClient(): any {
   if (insforgeClient) return insforgeClient;
-
-  // Try CLI first, then cached project.json
-  const resolved = await resolveBackendUrl();
+  const config = getZoeCloudConfig();
   insforgeClient = createClient({
-    baseUrl: resolved.baseUrl,
+    baseUrl: config.baseUrl,
     anonKey: '',
   });
-
-  // Restore persisted auth session
   restoreAuthSession(insforgeClient);
-
   return insforgeClient;
 }
 
@@ -75,7 +32,6 @@ function persistAuthSession(client: any): void {
     if (!tokenManager) return;
     const session = tokenManager.getSession?.();
     const accessToken = tokenManager.getAccessToken?.();
-    // Try to get refreshToken from http client or tokenManager
     const http = client.http || client.getHttpClient?.();
     const refreshToken = http?.refreshToken
       || tokenManager.refreshToken
@@ -85,9 +41,9 @@ function persistAuthSession(client: any): void {
       const enrichedSession = session
         ? { ...session, refreshToken: refreshToken || session.refreshToken }
         : session;
-      const dir = path.dirname(AUTH_HOME());
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
+      const dir = dirname(AUTH_HOME());
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      writeFileSync(
         AUTH_HOME(),
         JSON.stringify({ session: enrichedSession, accessToken, refreshToken }, null, 2)
       );
@@ -100,15 +56,13 @@ function persistAuthSession(client: any): void {
 function restoreAuthSession(client: any): void {
   try {
     const authPath = AUTH_HOME();
-    if (!fs.existsSync(authPath)) return;
-    const saved = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
+    if (!existsSync(authPath)) return;
+    const saved = JSON.parse(readFileSync(authPath, 'utf-8'));
     if (!saved) return;
     const token = saved.accessToken || saved.session?.accessToken;
     const refreshToken = saved.refreshToken || saved.session?.refreshToken;
     if (!token) return;
 
-    // Use client.setAccessToken if available — it updates both HTTP client
-    // and tokenManager. Falls back to manual sync.
     if (typeof client.setAccessToken === 'function') {
       client.setAccessToken(token);
     } else {
@@ -117,7 +71,6 @@ function restoreAuthSession(client: any): void {
       if (client.tokenManager?.setAccessToken) client.tokenManager.setAccessToken(token);
     }
 
-    // Restore refresh token so SDK can auto-refresh on 401
     const http = client.http || client.getHttpClient?.();
     if (refreshToken && http?.setRefreshToken) {
       http.setRefreshToken(refreshToken);
@@ -134,15 +87,15 @@ function restoreAuthSession(client: any): void {
 function clearAuthSession(): void {
   try {
     const authPath = AUTH_HOME();
-    if (fs.existsSync(authPath)) fs.unlinkSync(authPath);
+    if (existsSync(authPath)) unlinkSync(authPath);
   } catch {
     // ignore
   }
 }
 
 export async function loginWithGithub() {
-  const resolved = await resolveBackendUrl();
-  const baseUrl = resolved.baseUrl;
+  const config = getZoeCloudConfig();
+  const baseUrl = config.baseUrl;
 
   const client = createClient({
     baseUrl,
@@ -161,9 +114,8 @@ export async function loginWithGithub() {
     if (oauthResp.error || !oauthResp.data?.url) {
       throw new Error(
         oauthResp.error?.message
-        || `Could not reach OAuth endpoint at ${baseUrl}. ` +
-           `Check your project URL in ~/.insforge/project.json. ` +
-           `Run: npx @insforge/cli current --json to see the correct URL.`
+        || 'Unable to connect to Zoe Cloud.\n' +
+           `Please check your internet connection or visit:\n${ZOE_STATUS_PAGE}`
       );
     }
     const authUrl = oauthResp.data.url;
@@ -174,7 +126,6 @@ export async function loginWithGithub() {
 
     console.log(`  ${chalk.gray('⏳')}  Waiting for authentication...`);
 
-    // InsForge redirects with `?insforge_code=...` (not `code`)
     const code = await new Promise<string>(async (resolve, reject) => {
       const http = await import('http');
       const server = http.default.createServer((req: any, res: any) => {
@@ -268,106 +219,17 @@ export async function loginWithGithub() {
   // Persist auth session to disk so it survives process restarts
   persistAuthSession(client);
 
-  // Save/update project config with the resolved baseUrl
-  const configFile = CONFIG_HOME();
-  const dir = path.dirname(configFile);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  let existing: any = {};
-  if (fs.existsSync(configFile)) {
-    try { existing = JSON.parse(fs.readFileSync(configFile, 'utf-8')); } catch {}
-  }
-
-  const projectConfig = {
-    oss_host: baseUrl,
-    project_id: existing.project_id || resolved.projectId || (user?.metadata as any)?.project_id || '',
-  };
-  fs.writeFileSync(configFile, JSON.stringify(projectConfig, null, 2));
-
   insforgeClient = null;
-
-  let apiKey: string | null = null;
-  try {
-    apiKey = await fetchProjectApiKey(client, baseUrl);
-  } catch {
-    // Non-fatal — Gateway path may still work
-  }
 
   return {
     user: {
       email: user.email,
       name: (user?.profile as any)?.name || user.email,
     },
-    projectId: projectConfig.project_id,
-    token: apiKey || 'insforge-token',
-    apiKey: apiKey || '',
+    projectId: '',
+    token: 'zoe-cloud',
+    apiKey: '',
   };
-}
-
-async function resolveBackendUrl(): Promise<{ baseUrl: string; projectId: string; source: 'config' | 'cli' | 'default' }> {
-  // 1. Local config — fastest, no CLI dependency, user-controlled
-  const local = findInsForgeConfig();
-  if (local?.baseUrl && local.baseUrl !== 'https://api.insforge.dev') {
-    return {
-      baseUrl: local.baseUrl,
-      projectId: local.projectId || '',
-      source: 'config',
-    };
-  }
-
-  // 2. InsForge CLI as fallback — only if local config is missing/stale
-  try {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    const { stdout } = await execAsync('npx --yes @insforge/cli current --json', {
-      timeout: 45000,
-      windowsHide: true,
-    });
-    const info = JSON.parse(stdout);
-    if (info?.project?.oss_host && typeof info.project.oss_host === 'string') {
-      return {
-        baseUrl: info.project.oss_host,
-        projectId: info.project.project_id || '',
-        source: 'cli',
-      };
-    }
-  } catch {
-    // CLI not available or not authenticated — fall through
-  }
-
-  // 3. Last resort default
-  return {
-    baseUrl: local?.baseUrl || 'https://api.insforge.dev',
-    projectId: local?.projectId || '',
-    source: 'default',
-  };
-}
-
-async function fetchProjectApiKey(client: any, baseUrl: string): Promise<string | null> {
-  const endpoints = [
-    '/api/projects/current',
-    '/api/v1/projects/current',
-    '/api/cli/project',
-    '/api/projects/me',
-    '/api/v1/cli/project',
-  ];
-
-  for (const path of endpoints) {
-    try {
-      const response = await client.ai.http.get(path);
-      const apiKey = (response as any)?.api_key
-        || (response as any)?.apiKey
-        || (response as any)?.data?.api_key
-        || (response as any)?.data?.apiKey;
-      if (apiKey && typeof apiKey === 'string' && apiKey.length > 20) {
-        return apiKey;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return null;
 }
 
 let cachedOpenRouterKey: string | null = null;
@@ -375,14 +237,12 @@ let cachedOpenRouterKey: string | null = null;
 export async function getOpenRouterKeyFromSecrets(): Promise<string> {
   if (cachedOpenRouterKey) return cachedOpenRouterKey;
 
-  const config = findInsForgeConfig();
-  const baseUrl = config?.baseUrl || 'https://api.insforge.dev';
+  const config = getZoeCloudConfig();
+  const baseUrl = config.baseUrl;
 
-  const { getSession } = await import('./config.js');
-  const sessionApiKey = getSession().apiKey || (getSession().token !== 'insforge-token' ? getSession().token : '');
-
-  if (!sessionApiKey) {
-    throw new Error('Could not connect to AI provider');
+  const sessionApiKey = getSession().apiKey || getSession().token || '';
+  if (!sessionApiKey || sessionApiKey === 'insforge-token') {
+    throw getZoeCloudUnreachableError();
   }
 
   const secretNames = ['OPENROUTER_API_KEY', 'OPENROUTER_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY'];
@@ -411,12 +271,12 @@ export async function getOpenRouterKeyFromSecrets(): Promise<string> {
     }
   }
 
-  throw new Error('Could not connect to AI provider');
+  throw getZoeCloudUnreachableError();
 }
 
 export async function getCurrentUser() {
   try {
-    const client = await getInsForgeClient();
+    const client = getInsForgeClient();
     const resp = await client.auth.getCurrentUser();
     return resp.data?.user || null;
   } catch {
@@ -426,7 +286,7 @@ export async function getCurrentUser() {
 
 export async function logout() {
   try {
-    const client = await getInsForgeClient();
+    const client = getInsForgeClient();
     await client.auth.clearCredentials();
     clearAuthSession();
     insforgeClient = null;

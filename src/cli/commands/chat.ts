@@ -1,6 +1,7 @@
 import { getSession, getModel, saveModel } from '../../core/config.js';
 import { displayWelcome, clearThinking, displayFriendlyError, displayPlan, displaySummary, displayPhase } from '../../ui/display.js';
 import { runAgent, createPlan, executePlan } from '../../core/agent.js';
+import { ZOE_STATUS_PAGE } from '../../core/cloud.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -291,7 +292,7 @@ async function runTaskWithPipeline(request: string) {
     if (msg.includes('401') || msg.includes('Unauthorized')) {
       displayFriendlyError('Authentication issue.', 'Run: zoe login');
     } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('ENOTFOUND')) {
-      displayFriendlyError('Could not connect.', 'Check your internet connection');
+      displayFriendlyError('Unable to connect to Zoe Cloud.', 'Check your internet connection or visit:\n' + ZOE_STATUS_PAGE);
     } else if (msg.includes('timeout')) {
       displayFriendlyError('The request timed out.', 'Try a simpler request');
     } else {
@@ -323,7 +324,7 @@ async function runAgentWithDisplay(prompt: string) {
     if (msg.includes('401') || msg.includes('Unauthorized')) {
       displayFriendlyError('Authentication issue.', 'Run: zoe login');
     } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('ENOTFOUND')) {
-      displayFriendlyError('Could not connect.', 'Check your internet connection');
+      displayFriendlyError('Unable to connect to Zoe Cloud.', 'Check your internet connection or visit:\n' + ZOE_STATUS_PAGE);
     } else {
       displayFriendlyError(msg, 'Try rephrasing');
     }

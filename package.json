@@ -1,6 +1,6 @@
 {
   "name": "@nocodeveloper/zoe-cli",
-  "version": "2.5.6",
+  "version": "2.5.7",
   "description": "Zoe CLI — Public Preview. AI-powered coding assistant. Ship features, not boilerplate.",
   "type": "module",
   "main": "dist/cli/index.js",
