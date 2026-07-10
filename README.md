@@ -12,8 +12,8 @@ It helps developers understand, plan and safely build software directly from the
 [![Last Commit](https://img.shields.io/github/last-commit/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/commits/main)
 
 **Status:** Public Preview
-**Current npm `latest`:** 2.5.3
-**Project milestone:** v0.1 Public Preview
+**Current npm:** 0.1.5
+**Project milestone:** v0.1
 
 [Website](https://getzoe.cloud) · [Docs](./docs/installation.md) · [Roadmap](./ROADMAP.md) · [Changelog](./CHANGELOG.md)
 
