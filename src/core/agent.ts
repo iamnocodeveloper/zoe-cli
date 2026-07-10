@@ -8,6 +8,7 @@ import { displayThinking, clearThinking, displayPhase } from '../ui/display.js';
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
+import os from 'os';
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 
@@ -106,6 +107,33 @@ async function callOpenRouter(
 // Cache of file contents read during the current task — avoids duplicate read_file calls
 const readFileCache = new Map<string, string>();
 
+function detectImports(content: string): string[] {
+  const importRegex = /import\s+.*\s+from\s+['"]([^'"]+)['"]/g;
+  const packages: string[] = [];
+  let match;
+  while ((match = importRegex.exec(content)) !== null) {
+    const pkg = match[1];
+    if (!pkg.startsWith('.') && !pkg.startsWith('@types/') && !pkg.startsWith('node:')) {
+      packages.push(pkg);
+    }
+  }
+  return [...new Set(packages)];
+}
+
+function getProjectDependencies(): string[] {
+  const pkgPath = path.join(process.cwd(), 'package.json');
+  if (!fs.existsSync(pkgPath)) return [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    return [
+      ...Object.keys(pkg.dependencies || {}),
+      ...Object.keys(pkg.devDependencies || {}),
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function processToolCalls(
   response: string,
   fileTracker?: { created: number; modified: number }
@@ -169,6 +197,22 @@ async function processToolCalls(
         }
       }
 
+      // Auto-detect missing dependencies from generated imports
+      if (toolName === 'write_file' && writeSucceeded && params.content) {
+        const imports = detectImports(params.content);
+        if (imports.length > 0) {
+          const known = getProjectDependencies();
+          const missing = imports.filter(pkg => !known.includes(pkg));
+          if (missing.length > 0 && missing.length <= 5) {
+            toolResults.push({
+              name: 'write_file',
+              output: `${toolResult}\n\nDetected ${missing.length} new import(s) that may need installation: ${missing.join(', ')}. Consider running: npm install ${missing.join(' ')}`
+            });
+            continue;
+          }
+        }
+      }
+
       toolResults.push({ name: toolName, output: toolResult });
       console.log(`  ${chalk.green('✓')}  ${chalk.gray(toolResult.replace(/\n/g, ' · ').slice(0, 80))}`);
     }
@@ -193,6 +237,7 @@ export async function runAgent(
 
   const projectContext = getProjectDescription();
   const conversationHistory = getConversationContext();
+  const sysCtx = `\n## SYSTEM CONTEXT\n- Node.js: ${process.version}\n- Package manager: npm\n- OS: ${os.platform()} ${os.release()}\n- Working directory: ${process.cwd()}\n`;
 
   const messages = [
     {
@@ -202,6 +247,7 @@ export async function runAgent(
 ## CURRENT PROJECT CONTEXT
 ${projectContext}
 
+${sysCtx}
 ## CONVERSATION HISTORY
 ${conversationHistory}
 
@@ -231,14 +277,18 @@ ${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
   if (toolResults.length > 0) {
     // Stagnation guard: if the first batch of tool results had no writes, skip
     // the feedback loop entirely — there's nothing to follow up on.
-    const firstBatchHadWrites = toolResults.some(r =>
-      r.name === 'write_file' || r.name === 'edit_file'
+    const firstBatchHadProgress = toolResults.some(r =>
+      r.name === 'write_file' || r.name === 'edit_file' || r.name === 'run_command'
     );
 
-    if (firstBatchHadWrites) {
+    if (firstBatchHadProgress) {
       messages.push(
         { role: 'assistant' as const, content: finalResponse },
-        { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a brief summary of what was done. If more work is needed (e.g., another file to create, or the user expected multiple changes), proceed with the next tool call. IMPORTANT: If no write_file or edit_file succeeded, state clearly that no files were modified yet.` }
+        { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => {
+        const maxOut = r.name === 'run_command' ? 2000 : 500;
+        const out = r.output.length > maxOut ? '...(truncated)\n' + r.output.slice(-maxOut) : r.output;
+        return `${r.name}: ${out}`;
+      }).join('\n\n')}\n\nProvide a brief summary of what was done. If more work is needed (e.g., another file to create, or the user expected multiple changes), proceed with the next tool call. IMPORTANT: If no write_file or edit_file succeeded, state clearly that no files were modified yet.` }
       );
       displayThinking();
       try {
@@ -248,11 +298,11 @@ ${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
 
         // Stagnation guard in recursive feedback: if the followup had no
         // additional writes, accept the text and stop.
-        const followupHadWrites = followupProcessed.toolResults.some(r =>
-          r.name === 'write_file' || r.name === 'edit_file'
+        const followupHadProgress = followupProcessed.toolResults.some(r =>
+          r.name === 'write_file' || r.name === 'edit_file' || r.name === 'run_command'
         );
 
-        if (followupProcessed.toolResults.length > 0 && followupHadWrites) {
+        if (followupProcessed.toolResults.length > 0 && followupHadProgress) {
           messages.push(
             { role: 'assistant' as const, content: followupProcessed.text || followup },
             { role: 'user' as const, content: `Tool results:\n${followupProcessed.toolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nProvide a final summary of everything that was done.` }
@@ -355,6 +405,7 @@ export async function executePlan(
 
   const projectContext = getProjectDescription();
   const techStack = getProjectTechStack();
+  const execSysCtx = `\n## SYSTEM CONTEXT\n- Node.js: ${process.version}\n- Package manager: npm\n- OS: ${os.platform()} ${os.release()}\n- Working directory: ${process.cwd()}\n`;
 
   const fileTracker = { created: 0, modified: 0 };
 
@@ -367,6 +418,7 @@ export async function executePlan(
       content: `${ZOE_EXECUTE_PROMPT}
 ${plan}
 
+${execSysCtx}
 ## PROJECT CONTEXT
 ${projectContext}
 
@@ -390,17 +442,17 @@ ${tools.map(t => `- ${t.name}: ${t.description} — params: ${Object.keys(t.para
   let loopCount = 0;
   let workingToolResults = [...toolResults];
   let consecutiveNoWrites = 0;
-  const MAX_NO_WRITE_ITERATIONS = 2;
+  const MAX_NO_WRITE_ITERATIONS = 3;
   while (workingToolResults.length > 0 && loopCount < 5) {
     loopCount++;
 
-    // Stagnation guard: if the last batch had no writes, count it. After 2
-    // consecutive no-write iterations, break the loop — the AI isn't making
+    // Stagnation guard: if the last batch had no writes, count it. After 3
+    // consecutive no-progress iterations, break the loop — the AI isn't making
     // progress and continuing wastes tokens + confuses the user.
-    const hadWrites = workingToolResults.some(r =>
-      r.name === 'write_file' || r.name === 'edit_file'
+    const hadProgress = workingToolResults.some(r =>
+      r.name === 'write_file' || r.name === 'edit_file' || r.name === 'run_command'
     );
-    if (hadWrites) {
+    if (hadProgress) {
       consecutiveNoWrites = 0;
     } else {
       consecutiveNoWrites++;
@@ -411,7 +463,11 @@ ${tools.map(t => `- ${t.name}: ${t.description} — params: ${Object.keys(t.para
 
     executionMessages.push(
       { role: 'assistant' as const, content: finalExecText },
-      { role: 'user' as const, content: `Tool results:\n${workingToolResults.map(r => `${r.name}: ${r.output.slice(0, 500)}`).join('\n\n')}\n\nContinue. If you need to do more work (read another file, edit more, etc.), use the appropriate tool calls. When you're completely done, respond with a one-sentence summary and NO tool calls. IMPORTANT: If no write_file or edit_file succeeded so far, state that no files have been modified yet.` }
+      { role: 'user' as const, content: `Tool results:\n${workingToolResults.map(r => {
+        const maxOut = r.name === 'run_command' ? 2000 : 500;
+        const out = r.output.length > maxOut ? '...(truncated)\n' + r.output.slice(-maxOut) : r.output;
+        return `${r.name}: ${out}`;
+      }).join('\n\n')}\n\nContinue. If you need to do more work (read another file, edit more, etc.), use the appropriate tool calls. When you're completely done, respond with a one-sentence summary and NO tool calls. IMPORTANT: If no write_file or edit_file succeeded so far, state that no files have been modified yet.` }
     );
     displayPhase(`Continuing (step ${loopCount + 1})...`);
     const continueResult = await callOpenRouter(executionMessages);

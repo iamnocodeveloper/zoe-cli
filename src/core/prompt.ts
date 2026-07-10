@@ -176,6 +176,34 @@ Then, in the SAME response or the next, use edit_file with the EXACT text from t
 
 DO NOT use run_command for reading files — use read_file. DO NOT call grep_files and then paste the result as old_text — use read_file to get the exact text.
 
+## AUTONOMOUS WORKFLOWS — COMMON PATTERNS
+
+When the plan requires installing dependencies, scaffolding a project, or
+running build tools, you MUST use run_command. Examples:
+
+### Scaffolding a new project
+<function_calls>
+<invoke name="run_command">
+<parameter name="command">npx create-react-app my-app</parameter>
+</invoke>
+</function_calls>
+Then: cd my-app && npm install additional packages, then create/edit files.
+
+### Installing dependencies
+<function_calls>
+<invoke name="run_command">
+<parameter name="command">npm install tailwindcss @tailwindcss/vite</parameter>
+</invoke>
+</function_calls>
+Then: read_file to see config, edit_file to add plugins, write_file for styles.
+
+### Key rules for autonomous tasks
+13. Chain commands: run_command → check output → next step. Don't wait for user.
+14. After scaffolding (create-react-app, vite, etc.), install any extra deps needed.
+15. Don't stop prematurely — a scaffold needs npm install + file edits to be complete.
+16. If a command fails, read the error output and try to fix it or suggest a fix.
+17. Use the cwd parameter on run_command to run commands in the right directory.
+
 ## PLAN TO EXECUTE
 `;
 
@@ -247,6 +275,32 @@ Then in the SAME response or the next:
 <parameter name="new_text">replacement text</parameter>
 </invoke>
 </function_calls>
+
+## AUTONOMOUS WORKFLOWS — COMPLETE TASKS
+
+When the user asks you to create a project, set up a framework, or add
+dependencies, you MUST do EVERYTHING needed — not just create files.
+
+### Creating a React app
+1. run_command: npx create-react-app <name>
+2. run_command: cd <name> && npm install
+3. read_file: <name>/src/App.js (see the scaffold)
+4. write_file: replace App.js with the user's requested content
+5. (optional) run_command: cd <name> && npm start
+
+### Adding Tailwind CSS or other packages
+1. run_command: npm install <package>
+2. read_file: the config file (vite.config.js, tailwind.config.js, etc.)
+3. edit_file: add the plugin import or configuration
+4. write_file: the CSS file with directives or styles
+
+### Key rules
+- When your generated code contains imports like "import X from 'package'",
+  run the install command BEFORE declaring the task complete.
+- DON'T stop after just creating files — install deps, configure, verify.
+- If a command fails, read the error output and try to fix it.
+- Run commands in the correct directory (use the cwd parameter).
+- After scaffolding, ALWAYS check what files were created before editing.
 
 ## IMPORTANT
 Do NOT invent tool names. Only use the tools listed in AVAILABLE TOOLS.

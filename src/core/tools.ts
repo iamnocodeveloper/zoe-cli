@@ -207,7 +207,7 @@ export const tools: Tool[] = [
       properties: {
         command: { type: 'string', description: 'Command to run' },
         cwd: { type: 'string', description: 'Working directory (optional)' },
-        timeout: { type: 'number', description: 'Timeout in seconds (optional, default 60)' }
+        timeout: { type: 'number', description: 'Timeout in seconds (optional, default 120)' }
       },
       required: ['command']
     },
