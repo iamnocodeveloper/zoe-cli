@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { ZOE_LOGO, ZOE_DIVIDER, ZOE_FOOTER } from './logo.js';
+import { renderZoeLogo, ZOE_DIVIDER, ZOE_FOOTER } from './logo.js';
 import { getProjectStats } from '../core/intelligence.js';
 
 export function displayWelcome(user: string, model: string, projectName: string) {
@@ -7,7 +7,7 @@ export function displayWelcome(user: string, model: string, projectName: string)
   const projectIsEmpty = stats.files === 0;
 
   console.clear();
-  console.log(chalk.cyan(ZOE_LOGO));
+  console.log(renderZoeLogo());
   console.log('');
   console.log(chalk.gray(ZOE_DIVIDER));
   console.log('');
@@ -15,6 +15,8 @@ export function displayWelcome(user: string, model: string, projectName: string)
   console.log(`  ${chalk.gray('Understand your project before AI does.')}`);
   console.log('');
   console.log(`  ${chalk.white('Project:')} ${chalk.blue(projectName)}${projectIsEmpty ? chalk.gray(' (empty)') : ''}`);
+  console.log(`  ${chalk.white('Model:')}   ${chalk.yellow(model)}`);
+  console.log(`  ${chalk.white('Cloud:')}   ${chalk.green('Zoe Cloud connected')}`);
 
   if (!projectIsEmpty) {
     console.log(`  ${chalk.white('Files:')}   ${chalk.magenta(stats.files.toString())} ${chalk.gray('│')} ${chalk.white('Lines:')} ${chalk.magenta(stats.lines.toString())}`);
@@ -29,6 +31,8 @@ export function displayWelcome(user: string, model: string, projectName: string)
   } else {
     displayFirstRunSuggestions();
   }
+
+  console.log(`  ${chalk.gray('Quick:')}    ${chalk.cyan('/models')} ${chalk.gray('·')} ${chalk.cyan('/status')} ${chalk.gray('·')} ${chalk.cyan('/diff')} ${chalk.gray('·')} ${chalk.cyan('/help')}`);
 
   console.log('');
 }
@@ -142,6 +146,9 @@ export function displaySummary(result: {
   filesCreated: number;
   filesModified: number;
   warnings: string[];
+  status?: 'SUCCESS' | 'FAILED' | 'CANCELLED' | 'NEEDS_USER_INPUT';
+  missingFiles?: string[];
+  missingRequirements?: string[];
   nextStep?: string;
   elapsedMs?: number;
 }) {
@@ -150,8 +157,9 @@ export function displaySummary(result: {
     : '';
 
   const totalChanges = result.filesCreated + result.filesModified;
-  const headerIcon = totalChanges > 0 ? chalk.green('✅') : chalk.yellow('⚠');
-  const headerLabel = totalChanges > 0 ? chalk.bold('Completed') : chalk.bold('No files changed');
+  const successful = result.status ? result.status === 'SUCCESS' : totalChanges > 0 && result.warnings.length === 0;
+  const headerIcon = successful ? chalk.green('✅') : chalk.red('✖');
+  const headerLabel = successful ? chalk.bold('SUCCESS') : chalk.bold(result.status || 'FAILED');
 
   console.log('');
   console.log(`  ${chalk.green('─'.repeat(60))}`);
@@ -166,6 +174,12 @@ export function displaySummary(result: {
     console.log(`  ${chalk.yellow('⚠️   Warnings:')}     ${chalk.yellow(result.warnings.join(', '))}`);
   } else {
     console.log(`  ${chalk.white('⚠️   Warnings:')}     ${chalk.green('None')}`);
+  }
+  if (result.missingFiles && result.missingFiles.length > 0) {
+    console.log(`  ${chalk.red('Missing files:')} ${result.missingFiles.join(', ')}`);
+  }
+  if (result.missingRequirements && result.missingRequirements.length > 0) {
+    console.log(`  ${chalk.red('Missing requirements:')} ${result.missingRequirements.join(', ')}`);
   }
   console.log(`  ${chalk.green('─'.repeat(60))}`);
   if (result.nextStep && totalChanges > 0) {

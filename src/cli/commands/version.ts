@@ -1,13 +1,12 @@
 import chalk from 'chalk';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { createRequire } from 'module';
 import { getInsForgeClient, getCurrentUser } from '../../core/insforge.js';
 import { getModel } from '../../core/config.js';
 
 export async function displayVersion(): Promise<void> {
   let pkg = { name: 'zoe-cli', version: 'unknown' };
   try {
-    pkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8'));
+    pkg = createRequire(import.meta.url)('../../../package.json');
   } catch {
     // ignore
   }

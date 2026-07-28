@@ -3,19 +3,20 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { chat } from './commands/chat.js';
-import { loginCommand, logoutCommand, whoamiCommand } from './commands/login.js';
+import { loginCommand, whoamiCommand } from './commands/login.js';
+import { logoutCommand } from './commands/logout.js';
 import { modelsCommand, useCommand } from './commands/models.js';
 import { scanCommand } from './commands/scan.js';
 import { doctorCommand } from './commands/doctor.js';
 import { summaryCommand } from './commands/summary.js';
+import { resumeCommand } from './commands/resume.js';
 import { success, info, muted, DIM, RESET } from '../ui/styles.js';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { createRequire } from 'module';
 
 // Read version from package.json
 let version = '1.0.0';
 try {
-  const packageJson = JSON.parse(readFileSync(resolve('.zoe', '..', 'package.json'), 'utf-8'));
+  const packageJson = createRequire(import.meta.url)('../../package.json');
   version = packageJson.version || version;
 } catch {
   // Ignore errors reading package.json
@@ -23,7 +24,7 @@ try {
 
 const program = new Command()
   .name('zoe')
-  .description('Zoe - AI-powered coding assistant. Zero config, maximum power.')
+  .description('Zoe alpha - AI coding assistant for the terminal.')
   .version(version)
   .option('-v, --verbose', 'Enable verbose output');
 
@@ -53,6 +54,8 @@ program.addCommand(useCommand);
 program.addCommand(scanCommand);
 program.addCommand(doctorCommand);
 program.addCommand(summaryCommand);
+program.addCommand(resumeCommand);
+program.addCommand(new Command('help').description('Show Zoe help').action(() => program.outputHelp()));
 
 // Rich version subcommand
 const versionCommand = new Command('version')
@@ -66,7 +69,7 @@ program.addCommand(versionCommand);
 // Add help text organized by sections
 program.addHelpText('after', `
 ${chalk.bold('INSTALL')}
-  ${muted('$')} npm install -g @nocodeveloper/zoe-cli
+  ${muted('$')} npm install -g @nocodeveloper/zoe-cli@alpha
 
 ${chalk.bold('LOGIN')}
   ${chalk.cyan('zoe login')}           Open browser, sign in with GitHub
@@ -81,6 +84,7 @@ ${chalk.bold('COMMANDS')}
   ${chalk.cyan('zoe scan')}            Re-scan the current project
   ${chalk.cyan('zoe doctor')}          Verify environment, cloud, login
   ${chalk.cyan('zoe summary')}         Show project overview
+  ${chalk.cyan('zoe resume <taskId>')} Explicitly resume an eligible checkpoint
   ${chalk.cyan('zoe --version')}       Version, model, cloud status
   ${chalk.cyan('zoe --help')}          Show this help
 

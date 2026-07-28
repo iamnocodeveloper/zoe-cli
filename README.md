@@ -1,151 +1,145 @@
-# ZOE CLI
+# Zoe CLI
 
-**Understand your project before AI does.**
+Zoe is a terminal coding assistant that inspects a workspace, previews task intent, requests permission for consequential actions, and reports validation results.
 
-Zoe analyzes your project before generating code.
-It helps developers understand, plan and safely build software directly from the terminal.
+> [!WARNING]
+> Zoe is currently an alpha release. Commands, checkpoint schemas, configuration and behavior may change. Review previews and permission requests before allowing modifications. Use disposable or version-controlled projects while evaluating the CLI.
 
-[![npm](https://img.shields.io/npm/v/@nocodeveloper/zoe-cli.svg)](https://www.npmjs.com/package/@nocodeveloper/zoe-cli)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/stargazers)
-[![Issues](https://img.shields.io/github/issues/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/issues)
-[![Last Commit](https://img.shields.io/github/last-commit/iamnocodeveloper/zoe-cli.svg)](https://github.com/iamnocodeveloper/zoe-cli/commits/main)
+## Platform status
 
-**Status:** Public Preview
-**Current npm:** 0.2.0
-**Project milestone:** v0.1
+Windows 10/11 with PowerShell is the supported platform for this alpha. macOS and Linux have not been release-validated.
 
-[Website](https://getzoe.cloud) · [Docs](./docs/installation.md) · [Roadmap](./ROADMAP.md) · [Changelog](./CHANGELOG.md)
+Prerequisites:
 
----
+- Node.js 18 or newer
+- npm
+- Git when read-only repository awareness is desired
+- A browser for GitHub OAuth
 
 ## Installation
 
-```bash
-npm install -g @nocodeveloper/zoe-cli
+After the alpha is published:
+
+```powershell
+npm.cmd install --global @nocodeveloper/zoe-cli@alpha
+zoe --version
 ```
 
-## Quick Start
+To evaluate a local release tarball, replace the package name with its absolute `.tgz` path.
 
-```bash
-cd my-project
+## First command and authentication
+
+Zoe v1 uses the InsForge GitHub browser OAuth flow:
+
+```powershell
+zoe login
 ```
 
-```bash
+The browser flow is the official alpha authentication method. Device-code authentication is deferred. Session credentials are stored locally under the Zoe user-data directory; do not copy them into bug reports.
+
+Check status without changing credentials:
+
+```powershell
+zoe whoami
+zoe doctor
+```
+
+## Usage
+
+Start an interactive session:
+
+```powershell
 zoe
 ```
 
-1. **Login with GitHub** — one-time OAuth setup
-2. **Start building** — chat or run tasks
+Run a direct task:
 
----
-
-## Features
-
-- **GitHub Login** — one command, no tokens to copy
-- **No API Keys** — OpenRouter, AI gateway, secrets all handled by Zoe Cloud
-- **Project Intelligence** — scans structure, language, and dependencies automatically
-- **Execution Planning** — every task gets a plan before code is written
-- **AI Chat** — streaming responses in the terminal
-- **Create Files** — full content generated and saved
-- **Edit Existing Code** — targeted edits that preserve the rest of the file
-- **Safe File Editing** — `edit_file` fails fast if your target text is ambiguous
-- **Zoe Cloud** — your session, memory and secrets live in your private cloud
-- **Built in Public** — every release is shipped from a public, traceable commit
-
----
-
-## How Zoe Works
-
-```
-Understand    Read your project: files, stack, dependencies
-     ↓
-Plan          Generate an execution plan, with risks and steps
-     ↓
-Build         Write and edit code, run commands, apply changes
-     ↓
-Review        Verify the result and surface any warnings
+```powershell
+zoe "Inspect this project for release blockers"
 ```
 
-You see every step. Zoe never edits a file without telling you first.
-
----
-
-## Example
-
-```bash
-$ zoe
-```
+Useful commands:
 
 ```text
-Welcome back, Joel. You are signed in to your project.
-Model: deepseek/deepseek-v4-flash
-
-> Analyze this project
+zoe --help
+zoe --version
+zoe login
+zoe logout
+zoe whoami
+zoe scan
+zoe summary
+zoe doctor
+zoe resume <taskId>
 ```
 
-```text
-Reading workspace...
-Planning...
-  ✓ Scanned 47 files, 12 dependencies
-  ✓ Identified: TypeScript, Node, Express
-  ✓ Detected 2 critical config files (package.json, tsconfig.json)
+## Permissions
 
-Building...
-  ✓ Created src/routes/api.ts
-  ✓ Edited src/server.ts (added 12 lines)
-  ✓ Created tests/api.test.ts
+Read-only inspection may run automatically. Workspace writes and terminal commands pass through Zoe's permission boundary. Package installation is a distinct action and requires its own explicit confirmation. Destructive or ambiguous commands are not silently approved.
 
-Reviewing...
-  ✓ All imports valid
-  ✓ No TODOs / placeholders
+Permission prompts are safety controls, not a complete sandbox. Review commands and paths before approving them.
 
-Completed in 14s. 3 files changed.
+## Checkpoints and Safe Resume
+
+Accepted tasks create local metadata-only checkpoints under `~/.zoe/checkpoints`. Checkpoints exclude prompts, source contents, command output and credentials.
+
+Safe Resume is deliberately limited:
+
+- It requires `zoe resume <taskId>`.
+- Only compatible `READY` checkpoints after the ToolExecution boundary are eligible.
+- Workspace and Git drift reject resume.
+- Previous permissions are never reused.
+- Completed tool batches are never replayed.
+- A pending Reviewer cannot currently be reconstructed from persisted metadata.
+- Checkpoint schema v2 is alpha and may change.
+
+## Read-only Git awareness
+
+Zoe can report repository presence, branch or detached HEAD, commit, clean/dirty/conflicted state, staged/unstaged/untracked counts and locally available upstream metadata.
+
+Git awareness:
+
+- performs no fetch, pull, push or other network operation;
+- performs no add, commit, checkout, reset, clean, stash, merge or rebase;
+- does not expand workspace write boundaries;
+- blocks Safe Resume when Git state is conflicting, unavailable or changed.
+
+## Privacy and security
+
+- Workspace memory, summaries and checkpoints are local-first.
+- Only context required for model execution should be sent to the configured service.
+- OAuth and model credentials must never be committed or included in release packages.
+- `ZOE_DEBUG=true` enables diagnostic markers. Debug output is designed to omit credentials and checkpoint payloads, but should still be reviewed before sharing.
+- Report vulnerabilities privately according to [SECURITY.md](./SECURITY.md).
+
+## Known limitations
+
+- Alpha APIs, commands and checkpoint formats are unstable.
+- Windows is the only release-validated platform.
+- Safe Resume supports only post-tool safe boundaries.
+- Git ahead/behind counts use existing local refs and may be stale.
+- Git awareness is metadata inspection, not repository management.
+- Live authentication and model execution require the configured cloud service and network access.
+- Rollback, automatic resume, connectors and project-memory expansion are not included.
+
+## Troubleshooting
+
+- Run `zoe doctor` to inspect the local environment and authentication status.
+- If `zoe` is not found, confirm the npm global prefix is on `PATH`.
+- If browser login fails, retry `zoe login` and verify that Node.js is allowed to open the local OAuth callback.
+- Use `ZOE_DEBUG=true` only for temporary diagnostics.
+- Include Zoe version, Node version, Windows version, shell and redacted error output when filing an issue.
+
+Report product issues at [github.com/iamnocodeveloper/zoe-cli/issues](https://github.com/iamnocodeveloper/zoe-cli/issues).
+
+## Development
+
+```powershell
+npm.cmd ci
+npm.cmd test
+npm.cmd run typecheck
+npm.cmd run build
 ```
-
----
-
-## Roadmap
-
-- ✅ **v0.1 Public Preview** — current
-- 🟡 **v0.2 Better Terminal UI** — interactive TUI, inline diffs, multi-pane
-- 🟡 **v0.3 Project Intelligence** — semantic search, dependency graph, hotspots
-- 🟡 **v0.4 Zoe Cloud** — sessions, history, shareable workspaces
-- ⚪ **v1.0 Stable** — API freeze, plugin SDK, enterprise auth
-
-See the full breakdown in [ROADMAP.md](./ROADMAP.md).
-
----
-
-## Building in Public
-
-Zoe is being developed in public. Every commit, every decision, every failed experiment is part of the journey. If that resonates with you, follow along:
-
-- 🌐 [getzoe.cloud](https://getzoe.cloud)
-- 💻 [github.com/iamnocodeveloper/zoe-cli](https://github.com/iamnocodeveloper/zoe-cli)
-- 🐦 [@nocodeveloper](https://x.com/nocodeveloper) on X
-- 📺 [NoCodeveloper](https://youtube.com/@NoCodeveloper)
-
----
-
-## Contributing
-
-We welcome issues, feedback, and pull requests. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, coding style, and how to submit a PR.
-
-For community standards, see [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
-
----
-
-## Security
-
-Found a vulnerability? Please report it privately — see [SECURITY.md](./SECURITY.md).
-
----
 
 ## License
 
-[MIT](./LICENSE) — Copyright (c) 2026 Joel Araujo
-
----
-
-<sub>Zoe is an independent open-source project. AI inference is powered by [InsForge](https://insforge.dev) and routed through the AI gateway configured for your account.</sub>
+[MIT](./LICENSE) © 2026 Joel Araujo.

@@ -1,5 +1,5 @@
 import { getSession, saveSession } from './config.js';
-import { loginWithGithub, getCurrentUser } from './insforge.js';
+import { getAuthSessionStatus, loginWithGithub, type AuthErrorCode } from './insforge.js';
 
 export interface AuthResult {
   success: boolean;
@@ -9,11 +9,13 @@ export interface AuthResult {
     projectId?: string;
   };
   error?: string;
+  code?: AuthErrorCode;
 }
 
 export async function requireAuth(): Promise<AuthResult> {
   const session = getSession();
-  if (session.user && session.email) {
+  const status = getAuthSessionStatus();
+  if (status.authenticated) {
     return {
       success: true,
       user: {
@@ -22,6 +24,10 @@ export async function requireAuth(): Promise<AuthResult> {
         projectId: session.projectId,
       },
     };
+  }
+
+  if (status.code === 'MALFORMED_LOCAL_SESSION') {
+    return { success: false, code: status.code, error: 'Local Zoe authentication data is invalid.' };
   }
 
   console.log('\n🔐  Setting up authentication...\n');
@@ -52,11 +58,11 @@ export async function requireAuth(): Promise<AuthResult> {
 }
 
 export async function isAuthenticated(): Promise<boolean> {
-  const session = getSession();
-  return !!(session.user && session.email);
+  return getAuthSessionStatus().authenticated;
 }
 
 export function getAuthUser(): { name?: string; email?: string; projectId?: string } | null {
+  if (!getAuthSessionStatus().authenticated) return null;
   const session = getSession();
   if (!session.user || !session.email) {
     return null;

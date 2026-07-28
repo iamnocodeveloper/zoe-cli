@@ -109,3 +109,35 @@ export function clearMemorySession(): void {
     fs.unlinkSync(sessionPath);
   }
 }
+
+export function compactMemorySession(): void {
+  if (!currentSession) loadSession();
+  const session = currentSession!;
+  if (session.messages.length <= 8) return;
+
+  const older = session.messages.slice(0, -8);
+  const summary = older
+    .map((message) => `${message.role}: ${message.content.replace(/\s+/g, ' ').slice(0, 240)}`)
+    .join('\n');
+
+  session.messages = [
+    {
+      role: 'system',
+      content: `Conversation compacted. Previous context summary:\n${summary.slice(0, 4000)}`,
+      timestamp: new Date().toISOString(),
+    },
+    ...session.messages.slice(-8),
+  ];
+  saveSession();
+}
+
+export function getSessionInfo(): { id: string; messages: number; created: string; updated: string } {
+  if (!currentSession) loadSession();
+  const session = currentSession!;
+  return {
+    id: session.id,
+    messages: session.messages.length,
+    created: session.created,
+    updated: session.updated,
+  };
+}

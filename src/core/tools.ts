@@ -3,6 +3,10 @@ import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import chalk from 'chalk';
+import { z } from 'zod';
+import { assertCommandCwd, resolveWorkspaceDirectory, resolveWorkspacePath } from './workspace.js';
+import { requestPermission } from './permissions.js';
+import { backupFile } from './backups.js';
 
 const execAsync = promisify(exec);
 
@@ -16,6 +20,18 @@ export interface Tool {
   };
   execute: (params: any) => Promise<string>;
 }
+
+const toolSchemas: Record<string, z.ZodTypeAny> = {
+  list_directory: z.object({ path: z.string().min(1), depth: z.number().int().positive().max(10).optional() }),
+  read_file: z.object({ path: z.string().min(1) }),
+  write_file: z.object({ path: z.string().min(1), content: z.string() }),
+  edit_file: z.object({ path: z.string().min(1), old_text: z.string().min(1), new_text: z.string() }),
+  run_command: z.object({ command: z.string().min(1), cwd: z.string().optional(), timeout: z.number().positive().max(600).optional() }),
+  glob_files: z.object({ pattern: z.string().min(1), path: z.string().optional() }),
+  grep_files: z.object({ pattern: z.string().min(1), path: z.string().optional(), file_pattern: z.string().optional(), case_sensitive: z.boolean().optional() }),
+  create_directory: z.object({ path: z.string().min(1) }),
+  get_project_context: z.object({}),
+};
 
 function normalizeToolParams(toolName: string, params: any): any {
   if (!params || typeof params !== 'object') return params;
@@ -70,7 +86,7 @@ export const tools: Tool[] = [
     },
     execute: async (params: { path: string; depth?: number }) => {
       displayToolUsage('list_directory', params);
-      const fullPath = path.resolve(process.cwd(), params.path || '.');
+      const fullPath = resolveWorkspaceDirectory(params.path);
       const depth = params.depth || 1;
 
       if (!fs.existsSync(fullPath)) {
@@ -117,7 +133,7 @@ export const tools: Tool[] = [
     },
     execute: async (params: { path: string }) => {
       displayToolUsage('read_file', params);
-      const fullPath = path.resolve(process.cwd(), params.path);
+      const fullPath = resolveWorkspacePath(params.path);
 
       if (!fs.existsSync(fullPath)) {
         return `File not found: ${params.path}`;
@@ -148,13 +164,14 @@ export const tools: Tool[] = [
     },
     execute: async (params: { path: string; content: string }) => {
       displayToolUsage('write_file', params);
-      const fullPath = path.resolve(process.cwd(), params.path);
+      const fullPath = resolveWorkspacePath(params.path);
       const dir = path.dirname(fullPath);
 
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
+      backupFile(params.path);
       fs.writeFileSync(fullPath, params.content, 'utf-8');
       return `File written: ${params.path}`;
     }
@@ -173,7 +190,7 @@ export const tools: Tool[] = [
     },
     execute: async (params: { path: string; old_text: string; new_text: string }) => {
       displayToolUsage('edit_file', { path: params.path });
-      const fullPath = path.resolve(process.cwd(), params.path);
+      const fullPath = resolveWorkspacePath(params.path);
 
       if (!fs.existsSync(fullPath)) {
         return `File not found: ${params.path}`;
@@ -192,6 +209,7 @@ export const tools: Tool[] = [
         }
 
         const newContent = content.replace(params.old_text, params.new_text);
+        backupFile(params.path);
         fs.writeFileSync(fullPath, newContent, 'utf-8');
         return `File edited: ${params.path}`;
       } catch (error) {
@@ -214,7 +232,7 @@ export const tools: Tool[] = [
     execute: async (params: { command: string; cwd?: string; timeout?: number }) => {
       displayToolUsage('run_command', params);
       try {
-        const cwd = params.cwd || process.cwd();
+        const cwd = assertCommandCwd(params.cwd);
         const timeout = (params.timeout || 60) * 1000;
         const { stdout, stderr } = await execAsync(params.command, { cwd, timeout });
         const output = stdout || stderr || 'Done';
@@ -244,7 +262,7 @@ export const tools: Tool[] = [
     },
     execute: async (params: { pattern: string; path?: string }) => {
       displayToolUsage('glob_files', params);
-      const searchPath = params.path || process.cwd();
+      const searchPath = resolveWorkspaceDirectory(params.path);
       const { glob } = await import('glob');
       try {
         const files = await glob(params.pattern, {
@@ -277,7 +295,7 @@ export const tools: Tool[] = [
       displayToolUsage('grep_files', params);
       const fsSync = await import('fs');
       const pathMod = await import('path');
-      const searchPath = params.path || process.cwd();
+      const searchPath = resolveWorkspaceDirectory(params.path);
       const caseSensitive = params.case_sensitive !== false;
       const needle = caseSensitive ? params.pattern : params.pattern.toLowerCase();
       const filePattern = params.file_pattern;
@@ -346,7 +364,7 @@ export const tools: Tool[] = [
     },
     execute: async (params: { path: string }) => {
       displayToolUsage('create_directory', params);
-      const fullPath = path.resolve(process.cwd(), params.path);
+      const fullPath = resolveWorkspaceDirectory(params.path);
       fs.mkdirSync(fullPath, { recursive: true });
       return `Directory created: ${params.path}`;
     }
@@ -374,6 +392,17 @@ export async function executeTool(toolName: string, params: any): Promise<string
   }
   try {
     const normalizedParams = normalizeToolParams(toolName, params);
+    const schema = toolSchemas[toolName];
+    if (schema) {
+      const parsed = schema.safeParse(normalizedParams);
+      if (!parsed.success) {
+        return `Invalid arguments for ${toolName}: ${parsed.error.issues.map(issue => `${issue.path.join('.') || 'input'} ${issue.message}`).join('; ')}`;
+      }
+    }
+    const allowed = await requestPermission(toolName, normalizedParams);
+    if (!allowed) {
+      return `Permission denied by user for ${toolName}. No changes were made.`;
+    }
     return await tool.execute(normalizedParams);
   } catch (error: any) {
     return `Tool execution error: ${error.message}`;

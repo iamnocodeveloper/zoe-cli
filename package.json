@@ -1,7 +1,7 @@
 {
   "name": "@nocodeveloper/zoe-cli",
-  "version": "0.2.0",
-  "description": "Zoe CLI — Public Preview. AI-powered coding assistant. Ship features, not boilerplate.",
+  "version": "0.4.0-alpha.0",
+  "description": "Alpha release of Zoe, a Windows-first AI coding assistant for the terminal.",
   "type": "module",
   "main": "dist/cli/index.js",
   "types": "dist/cli/index.d.ts",
@@ -10,14 +10,17 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.map",
     "README.md",
     "LICENSE",
-    ".env.example"
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "scripts": {
     "start": "tsx src/cli/index.ts",
     "dev": "tsx watch src/cli/index.ts",
     "build": "tsc",
+    "test": "tsx test/workspace.test.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
@@ -36,7 +39,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/iamnocodeveloper/zoe-cli.git"
+    "url": "git+https://github.com/iamnocodeveloper/zoe-cli.git"
   },
   "homepage": "https://getzoe.cloud",
   "bugs": {
@@ -47,7 +50,6 @@
   },
   "dependencies": {
     "@insforge/sdk": "^1.4.3",
-    "@nocodeveloper/zoe-cli": "^2.3.1",
     "@openrouter/agent": "^0.7.2",
     "chalk": "^5.6.2",
     "commander": "^15.0.0",
@@ -61,6 +63,11 @@
     "typescript": "^6.0.3"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "alpha"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "test"
   }
 }
