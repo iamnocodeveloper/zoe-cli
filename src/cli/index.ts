@@ -11,16 +11,9 @@ import { doctorCommand } from './commands/doctor.js';
 import { summaryCommand } from './commands/summary.js';
 import { resumeCommand } from './commands/resume.js';
 import { success, info, muted, DIM, RESET } from '../ui/styles.js';
-import { createRequire } from 'module';
+import { getZoePackageMetadata } from '../core/package-metadata.js';
 
-// Read version from package.json
-let version = '1.0.0';
-try {
-  const packageJson = createRequire(import.meta.url)('../../package.json');
-  version = packageJson.version || version;
-} catch {
-  // Ignore errors reading package.json
-}
+const version = getZoePackageMetadata().version;
 
 const program = new Command()
   .name('zoe')

@@ -6,6 +6,8 @@ import { addMessage, getConversationHistory, getConversationContext, loadSession
 import { executeTool, tools } from './tools.js';
 import { ZOE_CHAT_SYSTEM_PROMPT, ZOE_SYSTEM_PROMPT, ZOE_STRUCTURED_PLAN_PROMPT, ZOE_EXECUTE_PROMPT, ZOE_REVIEW_PROMPT } from './prompt.js';
 import { displayThinking, clearThinking, displayPhase } from '../ui/display.js';
+import { EmptyModelResponseError } from '../ui/streaming-response.js';
+import { inspectToolProtocolMessage, MalformedToolProtocolError } from './tool-protocol.js';
 import { createProjectSnapshotFromWorkspace, parseExecutionPlan, validateExecutionPlan, validateRuntimeConstraints } from './execution-plan.js';
 import { extractUserIntent } from './user-intent.js';
 import { RuntimeController } from './runtime-controller.js';
@@ -73,7 +75,7 @@ export function enforceBuilderToolPolicy(policy: BuilderToolPolicy, toolName: st
 
 async function callOpenRouter(
   messages: ChatMessage[],
-  options?: { onFirstToken?: () => void }
+  onContent: (content: string) => void = () => {},
 ): Promise<string> {
   const model = getModel();
   let stream: AsyncIterable<any>;
@@ -107,7 +109,6 @@ async function callOpenRouter(
     if (!reader) throw new Error('Zoe Cloud returned an empty streaming response.');
     const decoder = new TextDecoder();
     let full = '';
-    let firstToken = false;
 
     while (reader) {
       const { done, value } = await reader!.read();
@@ -121,37 +122,41 @@ async function callOpenRouter(
           const json = JSON.parse(data);
           const content = json.choices[0]?.delta?.content || '';
           if (!content) continue;
-          if (!firstToken && options?.onFirstToken) {
-            options?.onFirstToken?.();
-            firstToken = true;
-          }
-          process.stdout.write(content);
+          onContent(content);
           full += content;
         } catch {}
       }
     }
-    console.log('\n');
     return full;
   }
 
   let fullResponse = '';
-  let hasEmittedFirstToken = false;
 
   for await (const chunk of stream) {
     const content = chunk.choices?.[0]?.delta?.content || '';
     if (!content) continue;
 
-    if (!hasEmittedFirstToken && options?.onFirstToken) {
-      options.onFirstToken();
-      hasEmittedFirstToken = true;
-    }
-
-    process.stdout.write(content);
+    onContent(content);
     fullResponse += content;
   }
 
-  console.log('\n');
   return fullResponse;
+}
+
+async function collectModelResponse(messages: ChatMessage[]): Promise<string> {
+  displayThinking();
+  try {
+    const response = await callOpenRouter(messages);
+    if (!response.trim()) throw new EmptyModelResponseError();
+    return response;
+  } finally {
+    clearThinking();
+  }
+}
+
+function renderFinalAssistantResponse(response: string, onFirstToken?: () => void): void {
+  onFirstToken?.();
+  process.stdout.write(`${response}\n\n`);
 }
 
 async function createCloudStream(
@@ -434,77 +439,47 @@ ${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
   console.log(`  📁  ${chalk.gray('Project:')} ${chalk.cyan(path.basename(process.cwd()))}`);
   console.log(`  🤖  ${chalk.gray('Model:')} ${chalk.yellow(model)}`);
 
-  displayThinking();
-
-  const fullResponse = await callOpenRouter(messages, options);
-  options?.cancellationToken?.throwIfCancelled();
-
   const localFileTracker = { created: 0, modified: 0 };
-  const { text, toolResults, writesSucceeded } = await processToolCalls(fullResponse, localFileTracker, undefined, undefined, workspaceContext, options?.cancellationToken);
-  let finalResponse = text || fullResponse;
-  let totalWrites = writesSucceeded;
+  let totalWrites = 0;
+  let usedTools = false;
+  let finalResponse = '';
+  const maxToolRounds = 4;
 
-  // ALWAYS run feedback loop after tool calls so the AI produces a summary
-  // and the user sees a clear "Done" message before the next prompt.
-  if (toolResults.length > 0) {
-    // Stagnation guard: if the first batch of tool results had no writes, skip
-    // the feedback loop entirely — there's nothing to follow up on.
-    const firstBatchHadResults = toolResults.length > 0;
+  for (let round = 0; round <= maxToolRounds; round++) {
+    const response = await collectModelResponse(messages);
+    options?.cancellationToken?.throwIfCancelled();
+    const protocol = inspectToolProtocolMessage(response);
+    if (protocol.kind === 'MALFORMED_TOOL_PROTOCOL') throw new MalformedToolProtocolError();
+    if (protocol.kind === 'ASSISTANT_MESSAGE') {
+      finalResponse = protocol.assistantText.trim();
+      if (!finalResponse) throw new EmptyModelResponseError();
+      break;
+    }
+    if (round === maxToolRounds) throw new MalformedToolProtocolError();
 
-    if (firstBatchHadResults) {
-      messages.push(
-        { role: 'assistant' as const, content: finalResponse },
-        { role: 'user' as const, content: `Tool results:\n${toolResults.map(r => {
+    const processed = await processToolCalls(response, localFileTracker, undefined, undefined, workspaceContext, options?.cancellationToken);
+    if (processed.toolResults.length === 0) throw new MalformedToolProtocolError();
+    usedTools = true;
+    totalWrites += processed.writesSucceeded;
+    messages.push(
+      { role: 'assistant' as const, content: response },
+      { role: 'user' as const, content: `Internal tool results:\n${processed.toolResults.map(r => {
         const maxOut = r.name === 'run_command' ? 2000 : 500;
         const out = r.output.length > maxOut ? '...(truncated)\n' + r.output.slice(-maxOut) : r.output;
         return `${r.name}: ${out}`;
-      }).join('\n\n')}\n\nAnswer the original user using these real results. For analysis or explanation requests, explain the project's purpose, architecture, technologies, integrations, important files, scripts, and risks. Do not merely repeat raw tool output. Use another tool only if genuinely necessary. IMPORTANT: If no write_file or edit_file succeeded, state clearly that no files were modified.` }
-      );
-      displayThinking();
-      try {
-        const followup = await callOpenRouter(messages, { onFirstToken: clearThinking });
-        options?.cancellationToken?.throwIfCancelled();
-        const followupProcessed = await processToolCalls(followup, localFileTracker, undefined, undefined, workspaceContext, options?.cancellationToken);
-        totalWrites += followupProcessed.writesSucceeded;
-
-        // Stagnation guard in recursive feedback: if the followup had no
-        // additional writes, accept the text and stop.
-        const followupHadProgress = followupProcessed.toolResults.some(r =>
-          r.name === 'write_file' || r.name === 'edit_file' || r.name === 'run_command'
-        );
-
-        if (followupProcessed.toolResults.length > 0) {
-          messages.push(
-            { role: 'assistant' as const, content: followupProcessed.text || followup },
-            { role: 'user' as const, content: `Tool results:\n${followupProcessed.toolResults.map(r => `${r.name}: ${r.output.slice(0, 1000)}`).join('\n\n')}\n\nProvide the final answer to the original user. Explain the project concretely when this was an analysis request. Do not output tool-call markup.` }
-          );
-          displayThinking();
-          try {
-            finalResponse = await callOpenRouter(messages, { onFirstToken: clearThinking });
-          } catch (e) {
-            finalResponse = followupProcessed.text || followup;
-          }
-        } else {
-          finalResponse = followupProcessed.text || followup;
-        }
-      } catch (e) {
-        // Feedback loop failed — surface the tool results so user sees what happened
-        finalResponse = `Done. Tool results:\n${toolResults.map(r => `- ${r.name}: ${r.output.slice(0, 300)}`).join('\n')}`;
-      }
-    }
-    // If first batch had no writes, finalResponse is already the raw text from
-    // the AI explaining what it tried. The honesty guard below will catch it
-    // if it claimed actions.
+      }).join('\n\n')}\n\nProduce one final answer to the original request. VERIFIED FACTS remain authoritative and cannot be replaced by partial tool results. If more tools are required, emit only one valid internal tool envelope. Never include tool protocol in prose.` }
+    );
   }
 
-  // HONESTY GUARD: If the AI claimed to have done work but no writes succeeded, append a correction
-  if (totalWrites === 0 && toolResults.length > 0) {
+  if (!finalResponse) throw new EmptyModelResponseError();
+  if (totalWrites === 0 && usedTools) {
     const claimedActions = /\b(created|wrote|updated|modified|changed|fixed|edited|added|removed|deleted|moved|renamed)\b/i.test(finalResponse);
     if (claimedActions) {
       finalResponse += '\n\n' + chalk.yellow('Note: No files were actually modified. The operations above did not produce any file changes.');
     }
   }
 
+  renderFinalAssistantResponse(finalResponse, options?.onFirstToken);
   addMessage('assistant', finalResponse);
 
   return finalResponse;

@@ -3,13 +3,15 @@ import { getAuthSessionStatus, loginWithGithub } from '../../core/insforge.js';
 import { saveSession, getSession } from '../../core/config.js';
 import chalk from 'chalk';
 
-export async function login() {
+export type LoginResult = 'COMPLETED' | 'CANCELLED' | 'FAILED';
+
+export async function login(): Promise<LoginResult> {
   try {
     console.log(chalk.cyan('  🔐  Setting up authentication...'));
     const session = await loginWithGithub();
     if (!session?.user) {
       console.log(chalk.red('  ✖  Authentication failed'));
-      return;
+      return 'FAILED';
     }
     // Compatibility/display metadata only. auth.json remains credential authority.
     saveSession({
@@ -22,11 +24,12 @@ export async function login() {
     });
     console.log(chalk.green('  ✅  Ready!'));
     console.log(chalk.gray(`  👤  Signed in as: ${session.user.email}`));
-    console.log(chalk.gray('  🚀  Starting Zoe...\n'));
-    const { chat } = await import('./chat.js');
-    await chat();
+    console.log(chalk.gray('  Authentication completed.\n'));
+    return 'COMPLETED';
   } catch (error: any) {
-    console.log(chalk.red(`  ✖  ${error.message || 'Authentication failed'}`));
+    const cancelled = /cancel|closed|aborted/i.test(error?.message || '');
+    console.log(chalk.red(`  ✖  ${cancelled ? 'Authentication cancelled.' : (error.message || 'Authentication failed')}`));
+    return cancelled ? 'CANCELLED' : 'FAILED';
   }
 }
 
@@ -40,5 +43,5 @@ export async function whoami() {
   console.log(chalk.gray(`  🕐  Last login: ${session.lastLogin || 'N/A'}`));
 }
 
-export const loginCommand = new Command('login').description('Set up authentication').action(login);
+export const loginCommand = new Command('login').description('Set up authentication').action(async () => { await login(); });
 export const whoamiCommand = new Command('whoami').description('Show current account').action(whoami);

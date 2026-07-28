@@ -6,12 +6,15 @@ import { activateTaskCancellation, clearTaskCancellation, createTaskCancellation
 import { checkpointStorage } from './checkpoint-storage.js';
 import { CheckpointLifecycleCapture, type CheckpointStageMetadata, type CheckpointWriter } from './checkpoint-lifecycle.js';
 import type { CheckpointPipelineStage } from './task-checkpoint.js';
+import { EmptyModelResponseError } from '../ui/streaming-response.js';
+import { MalformedToolProtocolError } from './tool-protocol.js';
 
 export type TaskEntryPoint = 'chat' | 'direct-cli' | 'run-command';
 export type TaskOutcomeCode =
   | 'COMPLETED' | 'COMPLETED_UNVERIFIED' | 'PARTIALLY_COMPLETED' | 'CANCELLED_BY_USER'
   | 'PERMISSION_DENIED' | 'PLANNING_FAILED' | 'EXECUTION_FAILED' | 'TOOL_FAILED'
-  | 'VALIDATION_FAILED' | 'REVIEW_FAILED' | 'CLOUD_UNAVAILABLE' | 'AUTH_REQUIRED' | 'INTERNAL_ERROR';
+  | 'VALIDATION_FAILED' | 'REVIEW_FAILED' | 'CLOUD_UNAVAILABLE' | 'AUTH_REQUIRED' | 'INTERNAL_ERROR'
+  | 'EMPTY_MODEL_RESPONSE' | 'MALFORMED_TOOL_PROTOCOL';
 
 export interface TaskContext {
   taskId: string;
@@ -167,6 +170,10 @@ export function createTaskOrchestrator(deps: TaskOrchestratorDependencies = {}) 
       } catch (error) {
         const final = error instanceof TaskCancelledError
           ? outcome(context, 'CANCELLED_BY_USER', { message: 'Task cancelled.', recoverable: true, metadata: { cancellationReason: cancellationToken.reason(), cancelledStage: cancellationToken.stage(), durationMs: now() - context.startedAt, completedStages: cancellationToken.completedStages(), skippedStages: cancellationToken.skippedStages(), workspace: workspaceContext.projectName, rollback: false } })
+          : error instanceof EmptyModelResponseError
+          ? outcome(context, 'EMPTY_MODEL_RESPONSE', { message: 'The model returned no visible content.', recoverable: true, suggestedNextAction: 'Retry the request.' })
+          : error instanceof MalformedToolProtocolError
+          ? outcome(context, 'MALFORMED_TOOL_PROTOCOL', { message: 'The model returned invalid internal tool protocol.', recoverable: true, suggestedNextAction: 'Retry the request.' })
           : isZoeAuthError(error)
           ? authOutcome(error, context)
           : outcome(context, 'INTERNAL_ERROR', { message: 'The task could not be completed.', recoverable: true, suggestedNextAction: 'Try again or run: zoe doctor' });

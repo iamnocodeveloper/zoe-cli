@@ -1,5 +1,4 @@
 import { getSession, getModel, saveModel } from '../../core/config.js';
-import { isAuthenticated } from '../../core/auth.js';
 import { displayWelcome, clearThinking, displayFriendlyError, displayPlan, displaySummary, displayPhase } from '../../ui/display.js';
 import { taskOrchestrator } from '../../core/task-orchestrator.js';
 import { renderTaskOutcome } from '../task-result-renderer.js';
@@ -10,17 +9,25 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import chalk from 'chalk';
-import { createInterface } from 'readline';
 import { assertCommandCwd } from '../../core/workspace.js';
 import { clearMemorySession, compactMemorySession, getSessionInfo } from '../../core/memory.js';
 import { restoreLatestBackup } from '../../core/backups.js';
-import { getAuthErrorMessage, getAuthSessionStatus, ZoeAuthError } from '../../core/insforge.js';
+import { getAuthErrorMessage, getAuthSessionStatus } from '../../core/insforge.js';
 import { classifyDirectCommand, type CommandPermissionDecision } from '../../core/command-permission-policy.js';
 import { getWorkspaceContext } from '../../core/workspace-intelligence.js';
 import { previewTaskContext } from '../task-preview-renderer.js';
 import { handleCancellationInterrupt } from '../../core/task-cancellation.js';
+import { createModelAuthGate } from '../../core/model-auth-flow.js';
+import { terminalInput } from '../../ui/terminal-input.js';
 
 const execAsync = promisify(exec);
+const modelAuthGate = createModelAuthGate({
+  status: getAuthSessionStatus,
+  startOAuth: async () => {
+    const { login } = await import('./login.js');
+    return login();
+  },
+});
 
 const TERMINAL_COMMANDS = new Set([
   'npm', 'yarn', 'pnpm', 'bun', 'npx',
@@ -123,23 +130,29 @@ function isTaskRequest(input: string): boolean {
 
 export async function chat(prompt?: string) {
   let session = getSession();
-  const startupAuth = getAuthSessionStatus();
-  if (!startupAuth.authenticated) {
-    if (startupAuth.code === 'MALFORMED_LOCAL_SESSION') {
-      renderTaskError(new ZoeAuthError(startupAuth.code), 'Run: zoe login');
+  const requiresModel = !prompt || !isTerminalCommand(prompt);
+  if (requiresModel) {
+    const startupAuth = getAuthSessionStatus();
+    if (!startupAuth.authenticated) console.log(chalk.yellow('  AUTH_REQUIRED · Zoe Cloud authentication is required.'));
+    const auth = await modelAuthGate.authorize(Boolean(prompt));
+    if (auth === 'SESSION_EXPIRED') {
+      console.log(chalk.yellow('  SESSION_EXPIRED · Run: zoe login'));
       return;
     }
-    try {
-      const { login } = await import('./login.js');
-      await login();
-    } catch {
-      // login() already shows its own error messages
-      process.exit(1);
+    if (auth === 'OAUTH_CANCELLED') {
+      console.log(chalk.yellow('  OAuth cancelled. No task was created.'));
+      return;
+    }
+    if (auth === 'AUTH_REQUIRED') {
+      console.log(chalk.yellow('  Authentication was not completed. Run: zoe login'));
+      return;
+    }
+    if (auth === 'RESUBMIT_REQUIRED') {
+      console.log(chalk.green('  OAuth completed. No task was created.'));
+      console.log(chalk.cyan(`  Submit your request again: ${prompt}`));
+      return;
     }
     session = getSession();
-    if (!(await isAuthenticated())) {
-      process.exit(1);
-    }
   }
 
   const model = getModel();
@@ -152,32 +165,32 @@ export async function chat(prompt?: string) {
 
   const handleSigint = () => {
     const decision = handleCancellationInterrupt();
-    if (decision === 'CANCEL_REQUESTED') console.log(chalk.yellow('\n  Cancelling active task at the next safe boundary...'));
+    if (decision === 'CANCEL_REQUESTED') {
+      terminalInput.cancel('permission', new Error('Permission input cancelled.'));
+      console.log(chalk.yellow('\n  Cancelling active task at the next safe boundary...'));
+    }
     else if (decision === 'CANCELLATION_ALREADY_IN_PROGRESS') console.log(chalk.gray('\n  Cancellation is already in progress.'));
     else process.exit(130);
   };
   process.on('SIGINT', handleSigint);
 
   if (prompt) {
-    if (isTerminalCommand(prompt)) {
-      await executeTerminalCommand(prompt);
-    } else if (classifyTask(prompt) === 'TASK_MODE') {
-      await runTaskWithPipeline(prompt);
-    } else {
-      await runAgentWithDisplay(prompt);
+    try {
+      if (isTerminalCommand(prompt)) {
+        await executeTerminalCommand(prompt);
+      } else if (classifyTask(prompt) === 'TASK_MODE') {
+        await runTaskWithPipeline(prompt);
+      } else {
+        await runAgentWithDisplay(prompt);
+      }
+      return;
+    } finally {
+      terminalInput.close();
+      process.off('SIGINT', handleSigint);
     }
-    process.off('SIGINT', handleSigint);
-    return;
   }
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const inputQueue = createInputLineQueue();
-  rl.on('line', (line) => inputQueue.push(line));
-  rl.on('close', () => inputQueue.close());
-  const readLine = () => inputQueue.read();
+  const readLine = () => terminalInput.readLine('main');
 
   while (true) {
     let userInput: string;
@@ -326,7 +339,7 @@ export async function chat(prompt?: string) {
     }
   }
 
-  rl.close();
+  terminalInput.close();
   process.off('SIGINT', handleSigint);
 }
 
@@ -389,11 +402,8 @@ async function requestDirectCommandConfirmation(decision: CommandPermissionDecis
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
   const packageDetails = decision.packageManager ? `\n  Manager: ${decision.packageManager}\n  Action: ${decision.packageAction || 'unknown'}\n  Packages: ${decision.packages.join(', ') || '(none detected)'}\n  Scope: ${decision.global ? 'global' : 'project'}` : '';
   console.log(`\n  ${chalk.yellow('Permission required')}\n  Command: ${decision.normalizedCommand}\n  Category: ${decision.category}\n  Risk: ${decision.riskLevel}\n  Workspace impact: ${decision.workspaceImpact}${packageDetails}\n  Reason: ${decision.reasons.join(' ')}`);
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await new Promise<string>((resolve) => rl.question(decision.requiresStrongConfirmation ? '  Type CONFIRM to continue: ' : '  Allow this one command? [y/N]: ', resolve));
-    return decision.requiresStrongConfirmation ? answer.trim() === 'CONFIRM' : /^(y|yes)$/i.test(answer.trim());
-  } finally { rl.close(); }
+  const answer = await terminalInput.readLine('direct-command', decision.requiresStrongConfirmation ? '  Type CONFIRM to continue: ' : '  Allow this one command? [y/N]: ');
+  return decision.requiresStrongConfirmation ? answer.trim() === 'CONFIRM' : /^(y|yes)$/i.test(answer.trim());
 }
 
 export async function executeTerminalCommand(command: string) {

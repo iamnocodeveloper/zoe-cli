@@ -20,5 +20,17 @@ export function renderTaskOutcome(result: TaskOutcome): void {
     console.log(chalk.gray(`\n  Response completed (unverified) · task ${result.taskId}\n`));
     return;
   }
+  if (result.code === 'EMPTY_MODEL_RESPONSE') {
+    console.log(`\n  ${chalk.red('✖')}  ${chalk.bold('Empty model response')}`);
+    console.log(`  ${chalk.gray('Task:')} ${result.taskId}`);
+    console.log(`  ${chalk.gray('Suggestion:')} Retry the request.\n`);
+    return;
+  }
+  if (result.code === 'MALFORMED_TOOL_PROTOCOL') {
+    console.log(`\n  ${chalk.red('✖')}  ${chalk.bold('Invalid model tool response')}`);
+    console.log(`  ${chalk.gray('Task:')} ${result.taskId}`);
+    console.log(`  ${chalk.gray('Suggestion:')} Retry the request.\n`);
+    return;
+  }
   displayFriendlyError(result.message, result.suggestedNextAction || 'Review the task details and try again.');
 }

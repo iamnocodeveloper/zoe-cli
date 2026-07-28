@@ -63,12 +63,7 @@ function normalizeToolParams(toolName: string, params: any): any {
 
 function displayToolUsage(toolName: string, params: any) {
   console.log(`  🔧  ${chalk.cyan('Using:')} ${chalk.yellow(toolName)}`);
-  if (params && Object.keys(params).length > 0) {
-    const paramStr = Object.entries(params)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(' ');
-    console.log(`      ${chalk.gray(paramStr)}`);
-  }
+  void params;
   console.log('');
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { resolveWorkspacePath } from '../src/core/workspace.js';
 import { executeTool, tools } from '../src/core/tools.js';
 import { createExecutionRuntime, detectPackageManager, type ExecutionPlan } from '../src/core/execution-runtime.js';
@@ -8,7 +9,7 @@ import { createProjectSnapshot, executionPlanSchema, parseExecutionPlan, validat
 import { extractUserIntent } from '../src/core/user-intent.js';
 import { ZOE_STRUCTURED_PLAN_PROMPT } from '../src/core/prompt.js';
 import { RuntimeController } from '../src/core/runtime-controller.js';
-import { parsePermissionDecision } from '../src/core/permissions.js';
+import { parsePermissionDecision, requestPermissionDecision } from '../src/core/permissions.js';
 import { classifyTask } from '../src/core/task-mode.js';
 import { createAuthenticatedRequestHelper, createAuthSessionStore, getAuthSessionStatus, getAuthErrorMessage, isZoeAuthError, logoutWithServices, type AuthSessionStore } from '../src/core/insforge.js';
 import { createBuilderToolPolicy, enforceBuilderToolPolicy, enforceRequestedChanges, hasBlockingReview, verifySemanticRequestedChanges } from '../src/core/agent.js';
@@ -29,6 +30,12 @@ import type { TaskCheckpoint } from '../src/core/task-checkpoint.js';
 import { analyzeWorkspaceDrift } from '../src/core/workspace-drift.js';
 import { createSafeResumeCoordinator } from '../src/core/safe-resume.js';
 import { inspectGitRepository, type GitCommandResult, type GitCommandRunner, type GitRepositoryContext } from '../src/core/git-awareness.js';
+import { EmptyModelResponseError, StreamingResponseController } from '../src/ui/streaming-response.js';
+import { getProjectDescription } from '../src/core/context.js';
+import { getZoePackageMetadata } from '../src/core/package-metadata.js';
+import { inspectToolProtocolMessage } from '../src/core/tool-protocol.js';
+import { createModelAuthGate, runAuthenticatedModelRequest } from '../src/core/model-auth-flow.js';
+import { ExclusiveLineInput, TerminalInputCoordinator, TerminalInputOwnershipError } from '../src/ui/terminal-input.js';
 
 const singleLinePrompt = buildPastedPrompt(['Explain src/App.tsx.']);
 assert.equal(singleLinePrompt, 'Explain src/App.tsx.');
@@ -1228,3 +1235,285 @@ assert.equal(classifyTask('Edita src/App.tsx'), 'TASK_MODE');
 assert.equal(classifyTask('Crea un archivo README.md'), 'TASK_MODE');
 assert.equal(classifyTask('ejecuta npm run build'), 'TASK_MODE');
 console.log('task mode classification tests passed');
+
+const streamingEvents: string[] = [];
+let delayedProgressActive = false;
+let finishCount = 0;
+const streamedChunks: string[] = [];
+const streamController = new StreamingResponseController({
+  startProgress: () => { streamingEvents.push('progress:start'); delayedProgressActive = true; },
+  stopProgress: () => { streamingEvents.push('progress:stop'); delayedProgressActive = false; },
+  writeContent: (chunk) => { streamingEvents.push(`content:${chunk}`); streamedChunks.push(chunk); },
+  finishContent: () => { streamingEvents.push('content:finish'); finishCount++; },
+});
+streamController.start();
+streamController.chunk('Paragraph one.\n\n');
+if (delayedProgressActive) streamingEvents.push('progress:delayed-write');
+streamController.chunk('| A | B |\n|---|---|\n| 1 | 2 |\n\n');
+streamController.chunk('```ts\nconst greeting = "hola";\n```');
+const completeStream = streamController.complete();
+streamController.complete();
+assert.deepEqual(streamingEvents.slice(0, 3), ['progress:start', 'progress:stop', 'content:Paragraph one.\n\n']);
+assert.equal(streamingEvents.some((event) => event === 'progress:delayed-write'), false);
+assert.equal(streamingEvents.findIndex((event) => event.startsWith('content:')) > streamingEvents.indexOf('progress:stop'), true);
+assert.match(completeStream, /Paragraph one\.\n\n\| A \| B \|/);
+assert.match(completeStream, /\|---\|---\|\n\| 1 \| 2 \|/);
+assert.match(completeStream, /```ts\nconst greeting = "hola";\n```/);
+assert.equal(streamedChunks.join(''), completeStream);
+assert.equal(finishCount, 1);
+
+const greetingWrites: string[] = [];
+const greetingController = new StreamingResponseController({
+  startProgress: () => {},
+  stopProgress: () => {},
+  writeContent: (chunk) => greetingWrites.push(chunk),
+  finishContent: () => {},
+});
+greetingController.start();
+greetingController.chunk('¡Hola! ¿En qué te ayudo?');
+assert.equal(greetingController.complete(), '¡Hola! ¿En qué te ayudo?');
+assert.equal(greetingWrites.join('').trim().length > 0, true);
+
+for (const emptyValue of ['', ' \r\n\t ']) {
+  let stopped = 0;
+  const emptyController = new StreamingResponseController({
+    startProgress: () => {},
+    stopProgress: () => { stopped++; },
+    writeContent: () => {},
+    finishContent: () => {},
+  });
+  emptyController.start();
+  emptyController.chunk(emptyValue);
+  assert.throws(() => emptyController.complete(), EmptyModelResponseError);
+  assert.equal(stopped > 0, true);
+  assert.equal(emptyController.currentState(), 'FAILED');
+}
+
+for (const terminalState of ['fail', 'cancel'] as const) {
+  let active = false;
+  const cleanupController = new StreamingResponseController({
+    startProgress: () => { active = true; },
+    stopProgress: () => { active = false; },
+    writeContent: () => {},
+    finishContent: () => {},
+  });
+  cleanupController.start();
+  cleanupController[terminalState]();
+  assert.equal(active, false);
+  assert.equal(cleanupController.currentState(), terminalState === 'fail' ? 'FAILED' : 'CANCELLED');
+}
+console.log('streaming response lifecycle tests passed');
+
+const groundedFixture = fs.mkdtempSync(path.join(process.cwd(), 'test', '.grounded-context-'));
+try {
+  fs.mkdirSync(path.join(groundedFixture, 'src'));
+  fs.mkdirSync(path.join(groundedFixture, 'real-directory'));
+  fs.writeFileSync(path.join(groundedFixture, 'package.json'), JSON.stringify({
+    name: '@nocodeveloper/zoe-cli',
+    version: getZoePackageMetadata().version,
+    scripts: { test: 'tsx test/workspace.test.ts', build: 'tsc' },
+    devDependencies: { typescript: '6.0.3' },
+  }));
+  fs.writeFileSync(path.join(groundedFixture, 'src', 'index.ts'), 'export {}');
+  const groundedContext = new WorkspaceIntelligence(groundedFixture).getContext();
+  const groundedDescription = getProjectDescription(groundedContext);
+  assert.equal(groundedContext.packageVersion, '0.4.0-alpha.0');
+  assert.match(groundedDescription, /Package version: 0\.4\.0-alpha\.0/);
+  assert.match(groundedDescription, /\[directory\] real-directory/);
+  assert.doesNotMatch(groundedDescription, /\[directory\] database/);
+  assert.doesNotMatch(groundedDescription, /Implemented Zoe capabilities:.*memory/i);
+  assert.match(groundedDescription, /Available scripts: build, test/);
+} finally {
+  fs.rmSync(groundedFixture, { recursive: true, force: true });
+}
+console.log('project-grounded conversational context tests passed');
+
+let authStatus = { authenticated: false, code: 'UNAUTHENTICATED' as const, tokenNearExpiry: false, refreshTokenAvailable: false };
+let oauthStarts = 0;
+let taskCreations = 0;
+const failedAuthGate = createModelAuthGate({
+  status: () => authStatus,
+  startOAuth: async () => { oauthStarts++; return 'FAILED'; },
+});
+const unauthenticatedRequest = await runAuthenticatedModelRequest('hola', failedAuthGate, async () => { taskCreations++; return 'answer'; });
+assert.equal(unauthenticatedRequest.auth, 'AUTH_REQUIRED');
+assert.equal(unauthenticatedRequest.preservedPrompt, 'hola');
+assert.equal(taskCreations, 0);
+
+let finishOAuth!: () => void;
+const oauthWait = new Promise<void>((resolve) => { finishOAuth = resolve; });
+authStatus = { authenticated: false, code: 'UNAUTHENTICATED', tokenNearExpiry: false, refreshTokenAvailable: false };
+oauthStarts = 0;
+const sharedOAuthGate = createModelAuthGate({
+  status: () => authStatus,
+  startOAuth: async () => {
+    oauthStarts++;
+    await oauthWait;
+    authStatus = { authenticated: true, tokenNearExpiry: false, refreshTokenAvailable: true };
+    return 'COMPLETED';
+  },
+});
+const concurrentAuthA = sharedOAuthGate.authorize(true);
+const concurrentAuthB = sharedOAuthGate.authorize(true);
+finishOAuth();
+assert.deepEqual(await Promise.all([concurrentAuthA, concurrentAuthB]), ['RESUBMIT_REQUIRED', 'RESUBMIT_REQUIRED']);
+assert.equal(oauthStarts, 1);
+
+const expiredAuthGate = createModelAuthGate({
+  status: () => ({ authenticated: true, tokenNearExpiry: true, refreshTokenAvailable: false }),
+  startOAuth: async () => 'FAILED',
+});
+assert.equal(await expiredAuthGate.authorize(true), 'SESSION_EXPIRED');
+const cancelledAuthGate = createModelAuthGate({
+  status: () => ({ authenticated: false, code: 'UNAUTHENTICATED', tokenNearExpiry: false, refreshTokenAvailable: false }),
+  startOAuth: async () => 'CANCELLED',
+});
+assert.equal(await cancelledAuthGate.authorize(true), 'OAUTH_CANCELLED');
+const authenticatedGate = createModelAuthGate({
+  status: () => ({ authenticated: true, tokenNearExpiry: false, refreshTokenAvailable: true }),
+  startOAuth: async () => 'FAILED',
+});
+const authenticatedRequest = await runAuthenticatedModelRequest('hola', authenticatedGate, async (prompt) => { taskCreations++; return `visible:${prompt}`; });
+assert.equal(authenticatedRequest.auth, 'AUTHENTICATED');
+assert.equal(authenticatedRequest.task, 'visible:hola');
+assert.equal(taskCreations, 1);
+console.log('model authentication gate tests passed');
+
+const xmlProtocol = '<function_calls><invoke name="read_file"><parameter name="path">package.json</parameter></invoke></function_calls>';
+const structuredProtocol = '<tool_calls>[{"name":"read_file","arguments":{"path":"package.json"}}]</tool_calls>';
+const xmlInspection = inspectToolProtocolMessage(`I will inspect this.\n${xmlProtocol}`);
+assert.equal(xmlInspection.kind, 'TOOL_REQUEST');
+assert.equal(xmlInspection.assistantText, '');
+assert.equal(xmlInspection.assistantText.includes('package.json'), false);
+const structuredInspection = inspectToolProtocolMessage(structuredProtocol);
+assert.equal(structuredInspection.kind, 'TOOL_REQUEST');
+assert.equal(structuredInspection.assistantText, '');
+assert.equal(inspectToolProtocolMessage('<tool_results>{"secret":"internal"}</tool_results>').kind, 'MALFORMED_TOOL_PROTOCOL');
+assert.equal(inspectToolProtocolMessage('<tool_calls>[{"name":"read_file"</tool_calls>').kind, 'MALFORMED_TOOL_PROTOCOL');
+const harmlessMarkdown = 'Use `<Component<T>>` and compare `a < b` in normal Markdown.';
+assert.deepEqual(inspectToolProtocolMessage(harmlessMarkdown), { kind: 'ASSISTANT_MESSAGE', assistantText: harmlessMarkdown });
+const simulatedRounds = [structuredProtocol, xmlProtocol, '# Final answer\n\nVisible once.'].map(inspectToolProtocolMessage);
+assert.deepEqual(simulatedRounds.map((round) => round.kind), ['TOOL_REQUEST', 'TOOL_REQUEST', 'ASSISTANT_MESSAGE']);
+assert.equal(simulatedRounds.filter((round) => round.kind === 'ASSISTANT_MESSAGE').length, 1);
+console.log('internal tool protocol boundary tests passed');
+
+const canonicalFixture = fs.mkdtempSync(path.join(process.cwd(), 'test', '.canonical-context-'));
+try {
+  fs.mkdirSync(path.join(canonicalFixture, 'src'));
+  fs.mkdirSync(path.join(canonicalFixture, 'test'));
+  fs.writeFileSync(path.join(canonicalFixture, 'package.json'), JSON.stringify({
+    name: '@nocodeveloper/zoe-cli',
+    version: '0.4.0-alpha.0',
+    bin: { zoe: 'dist/cli/index.js' },
+    scripts: { test: 'tsx test/workspace.test.ts', build: 'tsc', typecheck: 'tsc --noEmit' },
+  }));
+  fs.writeFileSync(path.join(canonicalFixture, 'src', 'index.ts'), 'export {}');
+  fs.writeFileSync(path.join(canonicalFixture, 'test', 'workspace.test.ts'), 'export {}');
+  const canonicalWorkspace = new WorkspaceIntelligence(canonicalFixture, Date.now, () => gitContextVariant({
+    repositoryDetected: true,
+    repositoryRoot: canonicalFixture,
+    workspaceInsideRepository: true,
+    workingTreeState: 'CLEAN',
+    currentBranch: 'main',
+  })).getContext();
+  const canonicalFacts = getProjectDescription(canonicalWorkspace);
+  const partialToolRead = 'Partial read: {"name":"@nocodeveloper/zoe-cli"}';
+  const mergedModelContext = `${canonicalFacts}\n\nPARTIAL TOOL RESULT\n${partialToolRead}`;
+  assert.match(mergedModelContext, /Package version: 0\.4\.0-alpha\.0/);
+  assert.match(mergedModelContext, /Package bin: zoe -> dist\/cli\/index\.js/);
+  assert.match(mergedModelContext, /Available scripts: build, test, typecheck/);
+  assert.match(mergedModelContext, /Tests directory: Detected/);
+  assert.match(mergedModelContext, /Verified file count: 3/);
+  assert.match(mergedModelContext, /Git: CLEAN on main/);
+  assert.match(mergedModelContext, /Never contradict VERIFIED FACTS/);
+} finally {
+  fs.rmSync(canonicalFixture, { recursive: true, force: true });
+}
+console.log('canonical verified-facts precedence tests passed');
+
+const fakeReadline = new EventEmitter() as EventEmitter & { close(): void };
+fakeReadline.close = () => {};
+const terminalWrites: string[] = [];
+const coordinatedInput = new TerminalInputCoordinator(
+  undefined as any,
+  { write: (value: string) => { terminalWrites.push(value); return true; } } as any,
+  (() => fakeReadline) as any,
+);
+
+const invalidMessages: string[] = [];
+const permissionRetry = requestPermissionDecision(coordinatedInput, 'Allow? ', (message) => invalidMessages.push(message));
+fakeReadline.emit('line', 'invalid');
+await Promise.resolve();
+await Promise.resolve();
+fakeReadline.emit('line', ' y ');
+assert.equal(await permissionRetry, 'approve');
+assert.deepEqual(invalidMessages, ['Invalid choice. Enter y, n, or a.']);
+assert.equal(terminalWrites.filter((value) => value === 'Allow? ').length, 2);
+assert.equal(coordinatedInput.activeOwner(), null);
+assert.equal(coordinatedInput.ownedLineListenerCount(), 1);
+
+const exclusiveInput = new ExclusiveLineInput();
+const permissionLine = exclusiveInput.read('permission');
+assert.equal(exclusiveInput.owner(), 'permission');
+assert.throws(() => exclusiveInput.read('main'), TerminalInputOwnershipError);
+assert.equal(exclusiveInput.submit('y'), true);
+assert.equal(await permissionLine, 'y');
+assert.equal(exclusiveInput.restorationCount(), 1);
+assert.equal(exclusiveInput.submit('y'), false);
+assert.equal(exclusiveInput.owner(), null);
+
+let phantomAskTasks = 0;
+const cleanMainLine = exclusiveInput.read('main');
+assert.equal(exclusiveInput.submit('next request'), true);
+if ((await cleanMainLine) === 'y') phantomAskTasks++;
+assert.equal(phantomAskTasks, 0);
+assert.equal(exclusiveInput.restorationCount(), 2);
+
+for (const [submitted, expected] of [['yes', 'approve'], ['n', 'deny'], ['a', 'always'], ['Y', 'approve']] as const) {
+  const decisionPromise = requestPermissionDecision(coordinatedInput, 'Allow? ');
+  fakeReadline.emit('line', submitted);
+  assert.equal(await decisionPromise, expected);
+  assert.equal(coordinatedInput.activeOwner(), null);
+  assert.equal(coordinatedInput.ownedLineListenerCount(), 1);
+}
+
+const cancelledPermission = coordinatedInput.readLine('permission', 'Allow? ');
+assert.equal(coordinatedInput.cancel('permission', new Error('cancelled')), true);
+await assert.rejects(cancelledPermission, /cancelled/);
+assert.equal(coordinatedInput.activeOwner(), null);
+const failedPermission = coordinatedInput.readLine('permission', 'Allow? ');
+assert.equal(coordinatedInput.cancel('permission', new Error('tool failed')), true);
+await assert.rejects(failedPermission, /tool failed/);
+assert.equal(coordinatedInput.activeOwner(), null);
+
+for (let index = 0; index < 20; index++) {
+  const successive = requestPermissionDecision(coordinatedInput, 'Allow? ');
+  fakeReadline.emit('line', index % 2 === 0 ? 'y' : 'n');
+  assert.equal(await successive, index % 2 === 0 ? 'approve' : 'deny');
+  assert.equal(coordinatedInput.ownedLineListenerCount(), 1);
+}
+
+const structuredSuccessLogs: string[] = [];
+const savedSuccessLog = console.log;
+console.log = ((message = '') => structuredSuccessLogs.push(String(message))) as typeof console.log;
+try {
+  renderTaskOutcome({
+    code: 'COMPLETED', taskId: 'build-success', mode: 'TASK_MODE', entryPoint: 'chat',
+    success: true, verified: true, message: '{"summary":"internal planner JSON"}',
+    changedFiles: { created: 1, modified: 0 }, warnings: [],
+  });
+} finally {
+  console.log = savedSuccessLog;
+}
+assert.equal(structuredSuccessLogs.filter((line) => line.includes('SUCCESS')).length, 1);
+assert.equal(structuredSuccessLogs.some((line) => line.includes('internal planner JSON')), false);
+assert.equal(structuredSuccessLogs.some((line) => line.includes('COMPLETED_UNVERIFIED')), false);
+assert.equal(coordinatedInput.activeOwner(), null);
+const restoredMainPrompt = coordinatedInput.readLine('main', '  > ');
+fakeReadline.emit('line', 'clean next prompt');
+assert.equal(await restoredMainPrompt, 'clean next prompt');
+assert.equal(coordinatedInput.activeOwner(), null);
+assert.equal(coordinatedInput.ownedLineListenerCount(), 1);
+coordinatedInput.close();
+assert.equal(coordinatedInput.ownedLineListenerCount(), 0);
+console.log('exclusive terminal input and phantom-task regression tests passed');

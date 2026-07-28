@@ -18,6 +18,8 @@ export interface WorkspaceSummary {
 }
 export interface WorkspaceContext {
   workspaceRoot: string; projectName: string; framework: string | null; language: WorkspaceLanguage | null;
+  packageName: string | null; packageVersion: string | null; availableScripts: Readonly<Record<string, string>>;
+  packageBin: Readonly<Record<string, string>>; runtime: string | null;
   packageManager: PackageManager; detectedFrameworks: readonly string[]; detectedLanguages: readonly WorkspaceLanguage[];
   gitRepository: boolean; mainDirectories: readonly string[]; ignoredDirectories: readonly string[];
   ignoredFiles: readonly string[]; dependencyFiles: readonly string[]; configFiles: readonly string[];
@@ -118,7 +120,12 @@ export class WorkspaceIntelligence {
     const statistics = { files: files.length, sourceFiles: files.filter((f) => f.language).length, configFiles: configFiles.length, totalBytes: files.reduce((sum, f) => sum + f.size, 0) };
     const summary = { projectType: frameworks[0] || languages[0] || 'Unknown', languages, frameworks, entryPoints, dependencyManagers: packageManager ? [packageManager] : [], estimatedSize: statistics.totalBytes, numberOfFiles: statistics.files, numberOfSourceFiles: statistics.sourceFiles, numberOfConfigFiles: statistics.configFiles };
     const gitContext = this.gitInspect(this.root);
-    this.context = deepFreeze({ workspaceRoot: this.root, projectName: pkg.name || path.basename(this.root), framework: frameworks.includes('Next.js') ? 'next' : frameworks.includes('React') ? 'react-vite' : null, language: languages[0] || null, packageManager, detectedFrameworks: frameworks, detectedLanguages: languages, gitRepository: gitContext.repositoryDetected, gitContext, mainDirectories: [...directories].sort(), ignoredDirectories: [...ignoredDirectories].sort(), ignoredFiles: ignoredFiles.sort(), dependencyFiles, configFiles, importantFiles, entryPoints, projectStatistics: statistics, directoryStructure: [...directories].sort(), files, summary, contextVersion: (this.context?.contextVersion || 0) + 1, generatedAt: this.clock() });
+    const availableScripts = Object.fromEntries(Object.entries(pkg.scripts || {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    const packageBin = typeof pkg.bin === 'string'
+      ? { [typeof pkg.name === 'string' ? pkg.name : 'cli']: pkg.bin }
+      : Object.fromEntries(Object.entries(pkg.bin || {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    const runtime = files.some((file) => file.relativePath === 'package.json') ? 'Node.js' : languages.includes('Python') ? 'Python' : languages.includes('Go') ? 'Go' : languages.includes('Rust') ? 'Rust' : null;
+    this.context = deepFreeze({ workspaceRoot: this.root, projectName: pkg.name || path.basename(this.root), packageName: typeof pkg.name === 'string' ? pkg.name : null, packageVersion: typeof pkg.version === 'string' ? pkg.version : null, availableScripts, packageBin, runtime, framework: frameworks.includes('Next.js') ? 'next' : frameworks.includes('React') ? 'react-vite' : null, language: languages[0] || null, packageManager, detectedFrameworks: frameworks, detectedLanguages: languages, gitRepository: gitContext.repositoryDetected, gitContext, mainDirectories: [...directories].sort(), ignoredDirectories: [...ignoredDirectories].sort(), ignoredFiles: ignoredFiles.sort(), dependencyFiles, configFiles, importantFiles, entryPoints, projectStatistics: statistics, directoryStructure: [...directories].sort(), files, summary, contextVersion: (this.context?.contextVersion || 0) + 1, generatedAt: this.clock() });
     if (process.env.ZOE_DEBUG === 'true') console.error(`[zoe workspace] git=attached state=${gitContext.workingTreeState}`);
     return this.context;
   }

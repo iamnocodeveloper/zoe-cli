@@ -4,15 +4,34 @@ import { getWorkspaceContext } from './workspace-intelligence.js';
 function context(value?: WorkspaceContext): WorkspaceContext { return value || getWorkspaceContext(); }
 
 export function getProjectDescription(value?: WorkspaceContext): string {
-  const workspace = context(value); const lines = [
+  const workspace = context(value);
+  const git = workspace.gitContext;
+  const capabilities = workspace.packageName === '@nocodeveloper/zoe-cli'
+    ? ['task orchestration', 'workspace inspection', 'explicit permissions', 'local checkpoints', 'safe resume', 'read-only Git awareness']
+    : [];
+  const lines = [
+    '## VERIFIED FACTS — CANONICAL WORKSPACE CONTEXT',
     `Project path: ${workspace.workspaceRoot}`,
     `Project name: ${workspace.projectName}`,
+    `Package name: ${workspace.packageName || 'Not detected'}`,
+    `Package version: ${workspace.packageVersion || 'Not detected'}`,
+    `Package bin: ${Object.entries(workspace.packageBin).map(([name, target]) => `${name} -> ${target}`).join(', ') || 'Not detected'}`,
     `Frameworks: ${workspace.detectedFrameworks.join(', ') || 'Unknown'}`,
     `Languages: ${workspace.detectedLanguages.join(', ') || 'Unknown'}`,
+    `Runtime: ${workspace.runtime || 'Not detected'}`,
     `Package manager: ${workspace.packageManager || 'None'}`,
+    `Available scripts: ${Object.keys(workspace.availableScripts).sort().join(', ') || 'None detected'}`,
+    `Important manifests: ${workspace.dependencyFiles.join(', ') || 'None detected'}`,
+    `Verified file count: ${workspace.projectStatistics.files}`,
+    `Verified source file count: ${workspace.projectStatistics.sourceFiles}`,
+    `Tests directory: ${workspace.mainDirectories.includes('test') || workspace.mainDirectories.includes('tests') ? 'Detected' : 'Not detected'}`,
     `Project structure (top level):`,
     ...workspace.mainDirectories.map((directory) => `  [directory] ${directory}`),
     ...workspace.importantFiles.slice(0, 20).map((file) => `  [important] ${file}`),
+    `Git: ${git.repositoryDetected ? `${git.workingTreeState}${git.currentBranch ? ` on ${git.currentBranch}` : ''}` : 'Not a Git repository'}`,
+    `Implemented Zoe capabilities: ${capabilities.join(', ') || 'Not applicable to this project'}`,
+    'Unavailable or uninspected information: file contents and architecture not explicitly listed above.',
+    'Grounding rules: Never contradict VERIFIED FACTS. Not inspected is not absent. A sanitized replica may be partial. Never infer repository-wide absence from one file read. Keep verified facts separate from interpretation.',
   ];
   return lines.join('\n');
 }

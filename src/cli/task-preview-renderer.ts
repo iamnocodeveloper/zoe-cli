@@ -1,8 +1,8 @@
 import chalk from 'chalk';
-import { createInterface } from 'node:readline';
 import type { TaskPreview } from '../core/task-preview.js';
 import { createTaskPreview } from '../core/task-preview.js';
 import type { TaskContext } from '../core/task-orchestrator.js';
+import { terminalInput } from '../ui/terminal-input.js';
 
 export function renderTaskPreview(preview: TaskPreview): void {
   const row = (label: string, value: string) => console.log(`  ${chalk.gray(`${label}:`.padEnd(21))}${value}`);
@@ -32,9 +32,7 @@ export async function pauseForHighComplexity(preview: TaskPreview, read?: () => 
   if (preview.pipeline !== 'Structured Pipeline' || preview.complexity !== 'HIGH') return;
   if (read) { await read(); return; }
   if (!process.stdin.isTTY || !process.stdout.isTTY) return;
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try { await new Promise<void>((resolve) => rl.question('  Press ENTER to continue...', () => resolve())); }
-  finally { rl.close(); }
+  await terminalInput.readLine('complexity-preview', '  Press ENTER to continue...');
 }
 
 export async function previewTaskContext(context: Readonly<TaskContext>): Promise<void> {

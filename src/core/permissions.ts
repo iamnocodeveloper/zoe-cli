@@ -1,6 +1,6 @@
-import { createInterface } from 'readline';
 import fs from 'fs';
 import { resolveWorkspacePath } from './workspace.js';
+import { terminalInput, type TerminalInputCoordinator } from '../ui/terminal-input.js';
 
 export type PermissionLevel = 'read' | 'write' | 'shell' | 'destructive';
 export type PermissionDecision = 'approve' | 'deny' | 'always' | 'invalid';
@@ -29,7 +29,19 @@ export function getPermissionLevel(toolName: string, params: Record<string, unkn
   return 'shell';
 }
 
-export async function requestPermission(toolName: string, params: Record<string, unknown>): Promise<boolean> {
+export async function requestPermissionDecision(
+  input: TerminalInputCoordinator,
+  prompt: string,
+  onInvalid: (message: string) => void = console.log,
+): Promise<Exclude<PermissionDecision, 'invalid'>> {
+  while (true) {
+    const decision = parsePermissionDecision(await input.readLine('permission', prompt));
+    if (decision !== 'invalid') return decision;
+    onInvalid('Invalid choice. Enter y, n, or a.');
+  }
+}
+
+export async function requestPermission(toolName: string, params: Record<string, unknown>, input: TerminalInputCoordinator = terminalInput): Promise<boolean> {
   const level = getPermissionLevel(toolName, params);
   if (level === 'read' || approvedForSession.has(level)) return true;
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
@@ -50,21 +62,7 @@ export async function requestPermission(toolName: string, params: Record<string,
     preview = '\n  A new directory will be created.';
   }
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    while (true) {
-      const answer = await new Promise<string>((resolve) => {
-        rl.question(`\nZoe requests ${label} permission for ${toolName}: ${target}${preview}\nAllow? [y]es / [n]o / [a]lways: `, resolve);
-      });
-      const decision = parsePermissionDecision(answer);
-      if (decision === 'invalid') {
-        console.log('Invalid choice. Enter y, n, or a.');
-        continue;
-      }
-      if (decision === 'always') approvedForSession.add(level);
-      return decision === 'approve' || decision === 'always';
-    }
-  } finally {
-    rl.close();
-  }
+  const decision = await requestPermissionDecision(input, `\nZoe requests ${label} permission for ${toolName}: ${target}${preview}\nAllow? [y]es / [n]o / [a]lways: `);
+  if (decision === 'always') approvedForSession.add(level);
+  return decision === 'approve' || decision === 'always';
 }

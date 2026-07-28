@@ -1,15 +1,10 @@
 import chalk from 'chalk';
-import { createRequire } from 'module';
+import { getZoePackageMetadata } from '../../core/package-metadata.js';
 import { getInsForgeClient, getCurrentUser } from '../../core/insforge.js';
 import { getModel } from '../../core/config.js';
 
 export async function displayVersion(): Promise<void> {
-  let pkg = { name: 'zoe-cli', version: 'unknown' };
-  try {
-    pkg = createRequire(import.meta.url)('../../../package.json');
-  } catch {
-    // ignore
-  }
+  const pkg = getZoePackageMetadata();
 
   const model = getModel() || 'deepseek/deepseek-v4-flash';
 
