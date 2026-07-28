@@ -1,6 +1,6 @@
 {
   "name": "@nocodeveloper/zoe-cli",
-  "version": "0.4.0-alpha.0",
+  "version": "0.4.0-alpha.1",
   "description": "Alpha release of Zoe, a Windows-first AI coding assistant for the terminal.",
   "type": "module",
   "main": "dist/cli/index.js",
